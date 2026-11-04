@@ -57,6 +57,20 @@
         <li>Add the fingerprint reader under <strong>Fingerprint devices</strong>.</li>
     </ol>
 
+    @unless ($storageLinked)
+        {{--
+            Only shown when it actually failed. Hosts that disable symlink()
+            are common enough to handle, and the symptom - every photograph
+            and the logo returning 404 - points nowhere near setup.
+        --}}
+        <div class="warn">
+            <strong>Uploaded images will not display yet.</strong> This host would not let the installer link
+            <code>public/storage</code> to <code>storage/app/public</code>. Run
+            <code>php artisan storage:link</code> from a shell, or create that link in your hosting control
+            panel's file manager.
+        </div>
+    @endunless
+
     <div class="warn">
         <strong>Delete the installer.</strong> It has locked itself and now answers 404, but the surest thing is
         to remove <code>app/Http/Controllers/Install</code> and the <code>/install</code> routes from a system

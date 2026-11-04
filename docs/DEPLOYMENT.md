@@ -282,32 +282,46 @@ Two ways in. The installer is the one to use on hosting without shell access.
 #### With the browser installer
 
 ```powershell
-# On your machine, build the panel into the API's public directory
-cd D:\gms\web
-npm ci
-$env:ADMIN_BASE = '/admin/'; npm run build
-Copy-Item D:\gms\web\dist D:\gms\api\public\admin -Recurse
-
-# A copy to upload, without the development tools
-Copy-Item D:\gms\api D:\gms\dist-api -Recurse
-cd D:\gms\dist-api
-composer install --no-dev --optimize-autoloader
-Remove-Item .env -ErrorAction SilentlyContinue
+.\build-release.ps1
 ```
 
-Zip `dist-api`, upload, extract, and point the domain's document root at its
-`public` directory. Then open **`https://projectkaya.lk/install`**.
+That builds the panel, installs dependencies without the development tools,
+and packs one zip. It also **strips the development machine's data**, which is
+the part worth knowing about: `api/storage/app` holds signed health
+screenings, member documents and photographs, and `storage/app/backups` holds
+whole database dumps. None of that belongs in a file that gets uploaded to
+shared hosting, so the directory structure is kept and the contents are thrown
+away. `.env` goes too — the installer writes a fresh one on the server.
 
-It checks the host, creates the database if your user is allowed to, writes
-`.env`, builds the schema, seeds the roles and makes your administrator
-account. Then it shuts: both a marker file in `storage/app/` and the state of
-the database close it, and the routes answer 404 from then on.
+Then:
+
+1. Upload and extract the zip on the host.
+2. Point the domain's document root at its `public/` directory.
+3. Open **`https://projectkaya.lk/install`**.
+
+The installer checks the host, creates the database if your user is allowed
+to, writes `.env`, builds the schema, seeds the roles, makes your
+administrator account and links `public/storage`. Then it shuts: both a marker
+file in `storage/app/` and the state of the database close it, and the routes
+answer 404 from then on.
+
+4. Add the cron entry it gives you.
+
+That is the whole installation — there is nothing to run from a shell, which
+is the point on hosting that does not give you one.
+
+The one thing that can still need a hand is the storage link: some hosts
+disable PHP's `symlink()`. The installer says so on its last page if that
+happened, and the fix is `php artisan storage:link`, or creating the link
+`public/storage` → `storage/app/public` in your control panel's file manager.
+Until then member photographs and the logo return 404 while everything else
+works.
 
 > **Install immediately after extracting.** Between upload and setup there is a
 > window in which anyone who finds the URL can install it themselves and own
-> the system. That window is the reason the page exists at all, and the reason
-> to close it in minutes rather than days. On a public site, delete
-> `app/Http/Controllers/Install` and the `/install` routes once you are in.
+> the system. That window is the reason to close it in minutes rather than
+> days. On a public site, delete `app/Http/Controllers/Install` and the
+> `/install` routes once you are in.
 
 #### By hand
 

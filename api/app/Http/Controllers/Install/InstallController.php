@@ -105,6 +105,7 @@ class InstallController extends Controller
             $this->installer->useDatabase($database);
             $this->installer->migrate();
             $this->installer->seedRoles();
+            $storageLinked = $this->installer->linkStorage();
 
             $this->installer->createGym(
                 $data['gym_name'],
@@ -126,6 +127,7 @@ class InstallController extends Controller
             'gymName' => $data['gym_name'],
             'email' => $data['admin_email'],
             'appUrl' => rtrim($data['app_url'], '/'),
+            'storageLinked' => $storageLinked,
         ]);
     }
 

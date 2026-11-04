@@ -313,4 +313,90 @@ class InstallerTest extends TestCase
             file_put_contents($path, $original);
         }
     }
+
+    /* ------------------------------------------------- the storage link */
+
+    /**
+     * A sandbox with its own public/ and storage/, so these never touch the
+     * real `public/storage` the development server is using.
+     */
+    private function sandboxPaths(): string
+    {
+        $base = sys_get_temp_dir().'/gms-link-'.bin2hex(random_bytes(6));
+
+        mkdir($base.'/public', 0775, true);
+        mkdir($base.'/storage/app/public', 0775, true);
+
+        $this->app->usePublicPath($base.'/public');
+        $this->app->useStoragePath($base.'/storage');
+
+        return $base;
+    }
+
+    #[Test]
+    public function it_links_public_storage_so_uploaded_images_are_served(): void
+    {
+        $base = $this->sandboxPaths();
+
+        if (! @symlink($base.'/storage/app/public', $base.'/public/probe')) {
+            $this->markTestSkipped('This host does not allow symlink().');
+        }
+
+        unlink($base.'/public/probe');
+
+        $this->assertTrue(app(Installer::class)->linkStorage());
+        $this->assertDirectoryExists($base.'/public/storage');
+
+        // The point of the link: a file written through the storage disk is
+        // reachable under public/. Without it every member photograph 404s.
+        file_put_contents($base.'/storage/app/public/logo.png', 'x');
+        $this->assertFileExists($base.'/public/storage/logo.png');
+    }
+
+    #[Test]
+    public function a_dead_link_left_by_a_copy_is_replaced_rather_than_believed(): void
+    {
+        $base = $this->sandboxPaths();
+
+        // What a zip built on another machine leaves behind: a link whose
+        // target does not exist here. Treating it as "already done" is how an
+        // installation finishes looking successful and serves no images.
+        if (! @symlink($base.'/nowhere', $base.'/public/storage')) {
+            $this->markTestSkipped('This host does not allow symlink().');
+        }
+
+        $this->assertTrue(app(Installer::class)->linkStorage());
+
+        file_put_contents($base.'/storage/app/public/logo.png', 'x');
+        $this->assertFileExists($base.'/public/storage/logo.png');
+    }
+
+    #[Test]
+    public function a_host_that_refuses_to_link_is_reported_rather_than_fatal(): void
+    {
+        $this->sandboxPaths();
+
+        // Nowhere to put the link. Plenty of shared hosts disable symlink()
+        // outright, and an installation that is otherwise complete should not
+        // be thrown away over it.
+        $this->app->usePublicPath(sys_get_temp_dir().'/gms-absent-'.bin2hex(random_bytes(6)).'/public');
+
+        $this->assertFalse(app(Installer::class)->linkStorage());
+    }
+
+    #[Test]
+    public function the_finished_page_says_so_when_images_will_not_display(): void
+    {
+        $data = [
+            'gymName' => 'Kaya Fitness',
+            'email' => 'owner@example.com',
+            'appUrl' => 'https://example.com',
+        ];
+
+        $warned = view('install.done', $data + ['storageLinked' => false])->render();
+        $quiet = view('install.done', $data + ['storageLinked' => true])->render();
+
+        $this->assertStringContainsString('Uploaded images will not display', $warned);
+        $this->assertStringNotContainsString('Uploaded images will not display', $quiet);
+    }
 }

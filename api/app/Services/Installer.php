@@ -282,6 +282,46 @@ class Installer
     }
 
     /**
+     * Make storage/app/public reachable at public/storage.
+     *
+     * `php artisan storage:link` is how this is normally done, and on shared
+     * hosting there is frequently no shell to run it in. Member photographs,
+     * the logo and every brand asset are served through this path, so an
+     * installation without it comes up looking broken in a way that has
+     * nothing obviously to do with setup.
+     *
+     * Reports whether the link exists afterwards and never throws. Hosts
+     * disable `symlink()` often enough that it is a thing to tell somebody
+     * about, not a reason to fail an otherwise finished installation.
+     */
+    public function linkStorage(): bool
+    {
+        $link = public_path('storage');
+        $target = storage_path('app/public');
+
+        // A link that survived a copy from another machine points nowhere.
+        if (is_link($link) && ! is_dir($link)) {
+            @unlink($link);
+        }
+
+        if (is_link($link) || is_dir($link)) {
+            return true;
+        }
+
+        if (! is_dir($target)) {
+            @mkdir($target, 0775, true);
+        }
+
+        try {
+            @symlink($target, $link);
+        } catch (\Throwable) {
+            // Reported below rather than thrown.
+        }
+
+        return is_link($link) || is_dir($link);
+    }
+
+    /**
      * The gym's first branch and its first administrator.
      *
      * One branch is created because almost everything else hangs off one, and

@@ -19,7 +19,8 @@ D:\gms
 ├── web/           React single-page application (the admin panel)
 ├── mobile/        Expo + React Native app for members
 ├── mobile-staff/  Expo + React Native app for staff (check-in desk + admin)
-└── docs/          Setup, device integration and operations guides
+├── docs/          Setup, device integration and operations guides
+└── build-release.ps1   Packs a deployable zip: panel + API, no dev data
 ```
 
 ---

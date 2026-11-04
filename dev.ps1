@@ -51,6 +51,19 @@ function Write-TextFile([string] $Path, [string] $Text) {
     [System.IO.File]::WriteAllText($Path, $Text, (New-Object System.Text.UTF8Encoding $false))
 }
 
+function Test-ServiceWindow([string] $Title) {
+    # Whether one of our own windows is already running this service.
+    #
+    # The port on its own is not enough. Vite stops listening for a moment
+    # while it restarts after a config change, and a run that happens to land
+    # in that gap starts a second one, which falls back to 5174. Both then sit
+    # there serving the same application on different ports, which is a
+    # confusing thing to debug and an easy thing to avoid.
+    $null -ne (Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like "*WindowTitle = '$Title'*" } |
+        Select-Object -First 1)
+}
+
 function Test-GmsApi([int] $Port) {
     # "Is something listening" is not the question - the port may hold another
     # Laravel application entirely, which answers every /api/* route with its
@@ -113,6 +126,32 @@ elseif (-not (Test-PortFree $ApiPort)) {
 
 $apiUrl = "http://127.0.0.1:$ApiPort"
 
+# ------------------------------------------------------ the bundler ports
+
+<#
+    Metro's ports get the same treatment as the API's, and for a reason worth
+    writing down: **iVMS-4200 listens on 8081**, which is Metro's default. Any
+    machine that also runs the Hikvision client - which here is the same
+    machine - has that port taken before Expo starts.
+
+    Expo would normally offer another port, but in a window with nothing
+    attached to its input it cannot ask, so the window simply closes and the
+    phone app is quietly missing from a run that otherwise looks fine.
+#>
+if (-not $NoMobile) {
+    $wantedMobile = $MobilePort
+    $MobilePort = Find-FreePort $MobilePort
+
+    # Searching from the staff default could land on the member app's port.
+    $StaffPort = Find-FreePort ([Math]::Max($StaffPort, $MobilePort + 1))
+
+    if ($MobilePort -ne $wantedMobile) {
+        Write-Host "Port $wantedMobile is taken (iVMS-4200 uses it, if it is running)." -ForegroundColor Yellow
+        Write-Host "The member app will use $MobilePort instead." -ForegroundColor Yellow
+        Write-Host ""
+    }
+}
+
 # ------------------------------------------------- point the clients at it
 
 # The admin panel proxies /api through its dev server.
@@ -165,17 +204,32 @@ if ($startApi) {
     Start-Sleep -Seconds 2
 }
 
-Start-Service 'GMS Admin' (Join-Path $root 'web') 'npm run dev'
+# Same reasoning as the API: rerunning this script to pick up a phone app that
+# failed to start should not leave a second Vite behind on another port, with
+# half the browser tabs pointing at whichever one answered first.
+if ((Test-PortFree $WebPort) -and -not (Test-ServiceWindow 'GMS Admin')) {
+    Start-Service 'GMS Admin' (Join-Path $root 'web') 'npm run dev'
+}
+else {
+    Write-Host "Reusing the admin panel already running on port $WebPort." -ForegroundColor Cyan
+    Write-Host ""
+}
 
 if (-not $NoMobile) {
     Start-Sleep -Seconds 2
     $memberClear = if ($needsClear['mobile']) { ' --clear' } else { '' }
     $staffClear = if ($needsClear['mobile-staff']) { ' --clear' } else { '' }
 
-    Start-Service 'GMS Member App' (Join-Path $root 'mobile') "npx expo start --port $MobilePort$memberClear"
+    # Same guard as the panel. Rerunning this to bring back a bundler that
+    # died should not leave the surviving one duplicated on another port.
+    if (-not (Test-ServiceWindow 'GMS Member App')) {
+        Start-Service 'GMS Member App' (Join-Path $root 'mobile') "npx expo start --port $MobilePort$memberClear"
+        Start-Sleep -Seconds 2
+    }
 
-    Start-Sleep -Seconds 2
-    Start-Service 'GMS Staff App' (Join-Path $root 'mobile-staff') "npx expo start --port $StaffPort$staffClear"
+    if (-not (Test-ServiceWindow 'GMS Staff App')) {
+        Start-Service 'GMS Staff App' (Join-Path $root 'mobile-staff') "npx expo start --port $StaffPort$staffClear"
+    }
 }
 
 # ------------------------------------------------------------------- report
