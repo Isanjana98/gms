@@ -193,6 +193,7 @@ _SRS §8, §13, §23, §24_
 | GET | `/api/biometric/devices/{device}` | `devices.view` |
 | PUT | `/api/biometric/devices/{device}` | `devices.manage` |
 | POST | `/api/biometric/devices/{device}/test` | `devices.view` |
+| POST | `/api/biometric/devices/{device}/open-door` | `devices.open_door` |
 | GET | `/api/biometric/drivers` | `devices.view` |
 | POST | `/api/biometric/push/{deviceCode}` | **public** |
 | POST | `/api/biometric/sync` | `devices.sync` |
@@ -202,6 +203,7 @@ _SRS §8, §13, §23, §24_
 | POST | `/api/biometric/users` | `enrollment.manage` |
 | DELETE | `/api/biometric/users/{biometricUser}` | `enrollment.manage` |
 | POST | `/api/biometric/users/{biometricUser}/match` | `enrollment.manage` |
+| POST | `/api/biometric/users/{biometricUser}/change-id` | `enrollment.manage` |
 | POST | `/api/biometric/users/{biometricUser}/verify` | `enrollment.manage` |
 | POST | `/api/biometric/users/sync` | `devices.sync` |
 
@@ -377,9 +379,12 @@ _SRS §30_
 
 ---
 
-## Member app
+## Member self-service
 
-_See [MOBILE.md](MOBILE.md)_
+These endpoints were built for a member phone app that has since been dropped.
+They are kept because they are tested, carry no cost while unused, and are the
+branch any future member-facing client would speak to — a web portal as much
+as a native app.
 
 Its own branch of the API, and deliberately not nested inside the staff routes.
 Every endpoint returns only the caller's own data and **takes no member id from

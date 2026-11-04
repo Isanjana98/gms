@@ -228,8 +228,161 @@ unmatched.
 Uploading pushes members onto the reader as users. It only creates the
 identity — fingerprints are still enrolled at the device by the member.
 
-The device user's validity window is set far into the future rather than to the
-member's expiry date. Expiry is enforced here, at scan time, where it can be
-changed by taking a payment. Keeping the reader's own validity window in step
-would mean touching hardware on every renewal, and a network failure mid-renewal
-would lock out a member who had just paid.
+The device user's *validity window* is still set far into the future rather
+than to the member's expiry date — but the *enable flag* on that window is kept
+in step, which is what actually stops a lapsed member at the door. See
+**The reader stops admitting lapsed members** below.
+
+---
+
+## Linking a member to a user the reader already has
+
+`GM-2026-00001` in here, `2` on the terminal. Two ways to join them:
+
+- **Devices → Unmatched device users → Link to member.** Search by name or
+  membership number, pick the member, done.
+- **Member → Fingerprint → Register fingerprint**, and fill in **ID on the
+  device**. Leave that blank and the member gets their own member ID, which is
+  what keeps the two sides in step without anybody thinking about it.
+
+Either way, **the scans that device user already made become this member's
+attendance**, backdated to when they actually happened.
+
+That matters more than it sounds. Every scan a reader sends for a device user
+nobody has linked is stored in full and marked unmatched — which is to say,
+recorded and unusable. Without recovering them a member's history silently
+begins on the day somebody got round to the paperwork, even though the system
+has been watching them come and go for weeks.
+
+Replay is oldest first, because whether a scan is an entry or an exit depends
+on whether the member is currently inside; out of order it would pair the
+wrong entries with the wrong exits.
+
+Two things worth knowing:
+
+- **Membership is not re-checked for history.** The door opened days ago and
+  the person was demonstrably there, so the visit is recorded and flagged
+  rather than refused. A member who holds no membership today still gets their
+  history back, with `membership_valid` false and the reason stored, so a
+  report can still show who was in the building on a lapsed membership. Live
+  scans are unaffected — somebody standing at the door is still refused if the
+  branch is set to refuse them.
+- **Membership state is today's, not that day's.** Reconstructing a membership
+  history that has since been renewed or expired would be guesswork.
+
+### `01` and `1` are the same person
+
+The number a terminal prints on its own screen is not always the string it
+sends in an event. Type `01` because that is what the screen showed, and a
+plain string comparison will never match a scan that arrives as `1` — the
+enrolment screen says registered and verified while every scan quietly files
+itself as unmatched.
+
+Scans now resolve leniently: an exact match always wins, and failing that an
+id made entirely of digits matches the mapping with the same numeric value.
+A reader genuinely holding both `1` and `01` as separate users resolves to
+neither, so the scan stays visibly unmatched rather than being credited to a
+guess.
+
+---
+
+## Making the device ID and the system ID match
+
+The number the reader shows and the member's ID here drift apart, and it is
+almost always the same story: somebody enrolled a member at the terminal before
+adding them to the system, or the reader arrived with users already on it. From
+then on the desk reads 47 off a screen while the record says 112.
+
+New enrolments avoid this — a member is given their own member ID as the device
+ID wherever it is free. For the ones that have already drifted, open the
+member, **Fingerprint → Change ID**.
+
+**The choice on that screen decides whether the fingerprint survives**, so it is
+put in front of you rather than decided for you:
+
+| | What happens | Fingerprint |
+|---|---|---|
+| **Leave "Change it on the reader too" off** | Only our record moves. Use this when the terminal is already right and we are the ones out of step. | **Kept** |
+| **Tick it, reader already has that ID** | We adopt the identity already on the device and set its name to the member. | **Kept** |
+| **Tick it, reader does not have that ID** | The user is created under the new number and the old one removed. | **Lost** — the member must enrol again |
+
+That last row is not a limitation we chose. Hikvision stores fingerprint
+templates against the employee number and offers no way to move one, so a
+change that recreates the user costs the member another trip to the counter.
+The system asks the reader which case applies rather than guessing, and the
+warning on screen says so before you confirm.
+
+An ID already held by a different member is refused. An ID held by an
+*unmatched* device user is not a conflict — that is the identity you are
+adopting, and the two records are merged.
+
+> **With a push-only device** — one the server cannot open a connection to —
+> only the first row is available. Read the number off the terminal and correct
+> the record to match; leave the tick box off.
+
+---
+
+## Opening the door from the system
+
+**Devices → Open door** releases the lock immediately, for the cases a reader
+cannot help with: a finger that will not read, a visitor, a delivery.
+
+It asks for a reason first, and the reason goes into the audit log with your
+name. The entry is written **before** the attempt, not after it succeeds — a
+refused attempt is exactly the one somebody will want to find later.
+
+Reception holds this permission (`devices.open_door`) by default, separately
+from `devices.manage`: letting someone in is an operational act that should not
+require handing over the device's address and password. The endpoint is
+throttled to ten calls a minute.
+
+---
+
+## The reader stops admitting lapsed members
+
+When a membership expires, is frozen or is cancelled, the member is **disabled
+on the reader** — their finger stops opening the door. Renewing re-enables them.
+
+**Disabled, never deleted.** Deleting the user would take the fingerprint with
+it, so every renewal would become a fresh enrolment and a queue at the desk.
+Clearing the reader's `Valid.enable` flag leaves the template exactly where it
+is and simply stops it working.
+
+Two things drive it:
+
+- **Immediately** after a membership is created, renewed, activated, suspended
+  or cancelled — so a member who has just paid can walk straight in.
+- **Nightly at 00:30**, just after the expiry sweep at 00:15, for everything
+  nobody touched. Run by hand with `php artisan biometric:sync-access`.
+
+Nothing is sent to the reader unless the decision has actually changed, so the
+nightly run over every member does not rewrite every record on the terminal.
+An unreachable reader does not stop the sweep or fail a payment — it is logged
+and retried on the next run.
+
+Scan-time validation stays regardless, and remains the real control. This only
+saves the member a walk to a door that was never going to open, and keeps the
+terminal's own user list honest for anyone reading it off the device.
+
+---
+
+## What needs the server to reach the reader
+
+Most of this chapter assumes the server can open a connection **to** the
+terminal. Three things depend on it and will not work otherwise:
+
+| Feature | Needs outbound access to the reader |
+|---|---|
+| Pull sync, Read users, Test connection | yes |
+| Opening the door | yes |
+| Disabling a lapsed member on the reader | yes |
+| Changing the ID on the reader | yes |
+| Changing the ID in the system only | **no** |
+| Push attendance (device posts to us) | **no** |
+
+That matters for a hosted installation. A reader sitting on the gym's LAN
+behind NAT can post events out to a public site perfectly well, but the site
+cannot call back in. If you want door control and automatic lockout on a hosted
+system, the reader needs to be reachable — which in practice means running the
+system on the gym's own network, not that you should expose a fingerprint
+terminal to the internet.

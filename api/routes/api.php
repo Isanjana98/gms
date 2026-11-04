@@ -282,6 +282,14 @@ Route::middleware(['auth:sanctum', 'staff.only', 'active.user'])->group(function
             Route::delete('devices/{device}', [BiometricDeviceController::class, 'destroy'])->name('devices.destroy');
         });
 
+        // Throttled hard on purpose. Releasing a lock is a physical act that
+        // holds the door open for a few seconds, and nothing legitimate needs
+        // it more than a handful of times a minute.
+        Route::middleware(['permission:'.Permissions::DEVICES_OPEN_DOOR, 'throttle:10,1'])->group(function () {
+            Route::post('devices/{device}/open-door', [BiometricDeviceController::class, 'openDoor'])
+                ->name('devices.open-door');
+        });
+
         Route::middleware('permission:'.Permissions::DEVICES_SYNC)->group(function () {
             Route::post('sync', [BiometricSyncController::class, 'attendance'])->name('sync');
             Route::post('users/sync', [BiometricSyncController::class, 'users'])->name('users.sync');
@@ -291,6 +299,7 @@ Route::middleware(['auth:sanctum', 'staff.only', 'active.user'])->group(function
             Route::post('users', [BiometricUserController::class, 'store'])->name('users.store');
             Route::post('users/{biometricUser}/verify', [BiometricUserController::class, 'verify'])->name('users.verify');
             Route::post('users/{biometricUser}/match', [BiometricUserController::class, 'match'])->name('users.match');
+            Route::post('users/{biometricUser}/change-id', [BiometricUserController::class, 'changeId'])->name('users.change-id');
             Route::delete('users/{biometricUser}', [BiometricUserController::class, 'destroy'])->name('users.destroy');
         });
     });

@@ -18,7 +18,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 #[Fillable([
     'member_id', 'device_id', 'biometric_user_id', 'device_user_name',
     'enrollment_status', 'fingerprint_count', 'has_card', 'has_face',
-    'sync_status', 'is_active', 'verified_at', 'last_synced_at',
+    'sync_status', 'is_active', 'access_enabled', 'verified_at', 'last_synced_at',
 ])]
 class BiometricUser extends Model
 {
@@ -31,6 +31,7 @@ class BiometricUser extends Model
             'has_card' => 'boolean',
             'has_face' => 'boolean',
             'is_active' => 'boolean',
+            'access_enabled' => 'boolean',
             'verified_at' => 'datetime',
             'last_synced_at' => 'datetime',
         ];

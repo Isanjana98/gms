@@ -11,17 +11,17 @@ are implemented; the MVP scope in SRS §33 is complete.
 | Database | MySQL / MariaDB |
 | Biometrics | Hikvision ISAPI over HTTP digest — pluggable driver |
 | PDFs | dompdf (invoices and receipts) |
-| Phone apps | Expo + React Native + TypeScript (members and staff) |
 
 ```
 D:\gms
 ├── api/           Laravel REST API, the public website, biometric agent, jobs
 ├── web/           React single-page application (the admin panel)
-├── mobile/        Expo + React Native app for members
-├── mobile-staff/  Expo + React Native app for staff (check-in desk + admin)
 ├── docs/          Setup, device integration and operations guides
 └── build-release.ps1   Packs a deployable zip: panel + API, no dev data
 ```
+
+The admin panel is responsive and is used on phones and tablets as well as at
+a desk; there are no separate native applications.
 
 ---
 
@@ -115,21 +115,19 @@ In production, one cron entry (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)):
 
 ---
 
-## Running all three together
+## Running both together
 
 ```powershell
 .\dev.ps1
 ```
 
-Finds a free port for the API, writes it into `web/.env`, `mobile/app.json`
-and `mobile-staff/app.json` so every client points at the right place, and
-opens each service in its own window. `-ApiPort 8010` forces a port;
-`-NoMobile` skips both phone apps (two Metro bundlers is a lot of memory).
+Finds a free port for the API, writes it into `web/.env` so the panel proxies
+to the right place, and opens each service in its own window. `-ApiPort 8010`
+forces a port.
 
-If an API of ours is already running it is reused rather than treated as a
-clash, so closing the admin panel's window and reopening it does not strand
-every client on a port that died with the last run. When the port does change,
-the affected phone app starts with `--clear` — see below for why that matters.
+Rerunning it is safe: an API or a panel already running is reused rather than
+treated as a clash, so bringing one back after it died does not leave two of
+the other on different ports.
 
 By hand, if you prefer:
 
@@ -137,11 +135,9 @@ By hand, if you prefer:
 |---|---|---|
 | API + website | `cd api && php artisan serve` | http://127.0.0.1:8000 |
 | Admin panel | `cd web && npm run dev` | http://localhost:5173 |
-| Member app | `cd mobile && npx expo start` | http://localhost:8081 |
-| Staff app | `cd mobile-staff && npx expo start` | http://localhost:8088 |
 
 The admin panel proxies `/api` and `/storage` to the API, so the browser stays
-on one origin. The member app calls the API directly.
+on one origin.
 
 ### If every API call returns 404
 
@@ -159,52 +155,23 @@ Get-NetTCPConnection -LocalPort 8000 -State Listen |
   Select-Object ProcessId, CommandLine
 ```
 
-Then either stop it, or run this API elsewhere and point the clients at it:
+Then either stop it, or run this API elsewhere and point the panel at it:
 
 ```
-web/.env                API_PROXY_TARGET=http://127.0.0.1:8010
-mobile/app.json         "extra": { "apiUrl": "http://localhost:8010/api" }
-mobile-staff/app.json   "extra": { "apiUrl": "http://localhost:8010/api" }
+web/.env    API_PROXY_TARGET=http://127.0.0.1:8010
 ```
 
 Restart the Vite dev server after changing `web/.env` — the proxy target is
 read once at start-up.
 
-### If a phone app says ERR_CONNECTION_REFUSED
+### If the database refuses to connect
 
-**It is still calling the previous run's port.** Expo inlines `extra.apiUrl`
-into the bundle when it builds, so editing `app.json` is not enough on its own
-— Metro will serve a cached bundle carrying the old address, and the app talks
-to a server that is no longer there while everything else works fine.
-
-Restart that app with the cache cleared:
-
-```bash
-cd mobile-staff && npx expo start --clear
-```
-
-`dev.ps1` does this for you, but only for an app whose URL actually changed:
-clearing costs about a minute of rebuild, so it is not worth paying on every
-start.
-
-To see which address a running app is really using, open it in a browser, sign
-in, and watch the network tab — the failing request names the port.
-
-### If a phone app is blocked by CORS
-
-**Its bundler moved to another port.** Expo asks for 8081 or 8088, and when
-that is taken — a second bundler, a leftover from the last run — it quietly
-takes the next free one, which the browser then reports as an origin the API
-will not talk to.
-
-Outside production `config/cors.php` matches **any loopback port**, so this
-should not happen; if it does, the API is running with `APP_ENV=production`.
-Check for a stray second bundler while you are there:
+**Check the port before anything else.** MariaDB under WAMP listens on **3307**
+where MySQL would use 3306, and `.env` shipping the usual 3306 produces
+`SQLSTATE[HY000] [2002]` with nothing in it to suggest the port is the problem.
 
 ```powershell
-Get-NetTCPConnection -State Listen | Where-Object LocalPort -in 8081,8082,8088 |
-  ForEach-Object { Get-CimInstance Win32_Process -Filter "ProcessId=$($_.OwningProcess)" } |
-  Select-Object ProcessId, CommandLine
+Get-NetTCPConnection -State Listen | Where-Object LocalPort -in 3306,3307
 ```
 
 ---
@@ -215,6 +182,7 @@ Get-NetTCPConnection -State Listen | Where-Object LocalPort -in 8081,8082,8088 |
 |---|---|---|
 | `biometric:sync` | every minute | Pull attendance from every reader (SRS §13) |
 | `memberships:expire` | 00:15 daily | Expire terms past their grace period (SRS §6) |
+| `biometric:sync-access` | 00:30 daily | Stop the readers admitting lapsed members |
 | `attendance:auto-close` | 23:30 daily | Close visits with no check-out (SRS §11) |
 | `notifications:dispatch --queue-reminders` | 08:00 daily | Queue expiry reminders (SRS §21) |
 | `notifications:dispatch` | every 15 min | Deliver queued messages |
@@ -237,39 +205,6 @@ All are safe to run by hand, and safe to run twice.
 
 Permissions are enforced by the API on every request. The interface hides what
 a user cannot reach, but that is a convenience, not the control.
-
----
-
-## The phone apps
-
-Two, because they have different audiences and different jobs.
-
-**`mobile/` — for members.** Sign in with a code sent to the phone number
-already on their record (no password), then see when the membership runs out,
-visit history, receipts and the class timetable.
-[docs/MOBILE.md](docs/MOBILE.md)
-
-**`mobile-staff/` — for staff.** The check-in desk, and the admin panel behind
-it. Five tabs — Check-in, Members, Today, Money, More — with every other module
-under **More**: memberships, enquiries, trainers, payments, invoices, expenses,
-plans, reports, workout plans, attendance, devices, website, staff users,
-branches, settings, audit log, backups and your own account. Sign in with the
-same details as the admin panel.
-[docs/MOBILE-STAFF.md](docs/MOBILE-STAFF.md)
-
-Each module is gated on the permission the API enforces, so a receptionist, an
-accountant and a trainer open the app to three different menus. A module hidden
-from the menu also refuses if its URL is reached directly — the menu is a
-courtesy, the API is the control.
-
-A few things stay in the admin panel on purpose, because a 400px screen is the
-wrong place for them: writing a workout programme, adding a fingerprint reader,
-restoring a backup, and choosing website photography.
-
-```bash
-cd mobile && npm install && npx expo start          # members
-cd mobile-staff && npm install && npx expo start    # staff
-```
 
 ---
 
@@ -393,10 +328,6 @@ you why. Restoring that backup is a manual job (see
   what protects them, and the checklist to work through before going live.
 - **[docs/WEBSITE.md](docs/WEBSITE.md)** — the public website, what is editable
   and what is read live from the system.
-- **[docs/MOBILE.md](docs/MOBILE.md)** — the member phone app, how members sign
-  in without a password, and the wall between members and staff.
-- **[docs/MOBILE-STAFF.md](docs/MOBILE-STAFF.md)** — the staff phone app, and
-  why the check-in desk is the only part that needed one.
 
 ---
 

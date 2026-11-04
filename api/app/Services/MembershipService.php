@@ -8,10 +8,12 @@ use App\Enums\PaymentStatus;
 use App\Models\Member;
 use App\Models\Membership;
 use App\Models\MembershipPlan;
+use App\Services\Biometric\AccessControlService;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * SRS 5 / 6 - Selling, renewing and expiring memberships.
@@ -34,7 +36,7 @@ class MembershipService
      */
     public function create(Member $member, MembershipPlan $plan, array $options = []): Membership
     {
-        return $this->numbers->withRetry(fn () => DB::transaction(function () use ($member, $plan, $options) {
+        $membership = $this->numbers->withRetry(fn () => DB::transaction(function () use ($member, $plan, $options) {
             $start = isset($options['start_date'])
                 ? Carbon::parse($options['start_date'])->startOfDay()
                 : today();
@@ -77,6 +79,10 @@ class MembershipService
 
             return $membership->refresh();
         }));
+
+        $this->pushAccessToReaders($member);
+
+        return $membership;
     }
 
     /**
@@ -95,7 +101,7 @@ class MembershipService
             throw new \RuntimeException('Cannot renew: the original plan no longer exists. Choose a plan explicitly.');
         }
 
-        return $this->numbers->withRetry(fn () => DB::transaction(function () use ($previous, $plan, $options) {
+        $membership = $this->numbers->withRetry(fn () => DB::transaction(function () use ($previous, $plan, $options) {
             $member = $previous->member;
             $start = $this->renewalStartDate($previous, $options['start_date'] ?? null);
 
@@ -141,6 +147,12 @@ class MembershipService
 
             return $membership->refresh();
         }));
+
+        // The member of the term being renewed: `$member` inside the closure
+        // above is the closure's own, and is not in scope out here.
+        $this->pushAccessToReaders($previous->member);
+
+        return $membership;
     }
 
     /**
@@ -192,6 +204,8 @@ class MembershipService
             $this->refreshMemberState($membership->member);
         });
 
+        $this->pushAccessToReaders($membership->member);
+
         return $membership->refresh();
     }
 
@@ -205,6 +219,8 @@ class MembershipService
 
             $this->refreshMemberState($membership->member);
         });
+
+        $this->pushAccessToReaders($membership->member);
 
         return $membership->refresh();
     }
@@ -220,6 +236,8 @@ class MembershipService
 
             $this->refreshMemberState($membership->member);
         });
+
+        $this->pushAccessToReaders($membership->member);
 
         return $membership->refresh();
     }
@@ -282,6 +300,37 @@ class MembershipService
             'membership_expires_on' => ($active ?? $latest)?->end_date,
             'status' => $status,
         ])->save();
+
+    }
+
+    /**
+     * Tell the readers who may now come in.
+     *
+     * Called by each public method *after* its transaction has returned, not
+     * from inside `refreshMemberState`. Two reasons, and the second is the
+     * one that matters:
+     *
+     *  - A reader on the end of a slow network must never be holding a
+     *    database transaction open while somebody is paying at the counter.
+     *  - Deferring it to `DB::afterCommit` would put it past the point where
+     *    anything can observe it, including a test - and a hook that silently
+     *    never runs is worse than not having one.
+     *
+     * Failure is swallowed deliberately. An unreachable reader is not a
+     * reason to fail a payment that has already been taken, and the nightly
+     * sweep picks up whatever did not land. Nothing is sent at all unless the
+     * decision actually changed, so the ordinary save touches no hardware.
+     */
+    private function pushAccessToReaders(Member $member): void
+    {
+        try {
+            app(AccessControlService::class)->syncMember($member->refresh());
+        } catch (\Throwable $e) {
+            Log::warning('Could not push access to the readers after a membership change.', [
+                'member_id' => $member->getKey(),
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**

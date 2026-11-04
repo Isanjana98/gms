@@ -157,16 +157,11 @@ class HikvisionDriver implements DeviceDriver
             $items = $body['UserInfo'] ?? [];
 
             foreach ($items as $item) {
-                yield new DeviceUser(
-                    biometricUserId: (string) ($item['employeeNo'] ?? $item['employeeNoString'] ?? ''),
-                    name: $item['name'] ?? null,
-                    fingerprintCount: (int) ($item['numOfFP'] ?? $item['fingerPrintNum'] ?? 0),
-                    hasCard: (int) ($item['numOfCard'] ?? 0) > 0,
-                    hasFace: (int) ($item['numOfFace'] ?? 0) > 0,
-                    validFrom: $item['Valid']['beginTime'] ?? null,
-                    validTo: $item['Valid']['endTime'] ?? null,
-                    raw: $item,
-                );
+                $user = $this->mapDeviceUser($item);
+
+                if ($user !== null) {
+                    yield $user;
+                }
             }
 
             $returned = (int) ($body['numOfMatches'] ?? count($items));
@@ -195,13 +190,17 @@ class HikvisionDriver implements DeviceDriver
                 'name' => $user->name ?? $user->biometricUserId,
                 'userType' => 'normal',
                 'Valid' => [
-                    'enable' => true,
+                    // Off for a member whose membership has lapsed or been
+                    // frozen: the door stops opening for them, their
+                    // fingerprints stay on the reader, and a renewal is one
+                    // flag back rather than a fresh enrolment.
+                    'enable' => $user->enabled,
                     'beginTime' => $user->validFrom ?? now()->format('Y-m-d\TH:i:s'),
-                    // The device needs a concrete end date, and membership
-                    // expiry is enforced by us at scan time rather than by the
-                    // reader - so this is a far horizon, not the member's
-                    // actual expiry. Keeping the two in sync would mean
-                    // touching hardware on every renewal.
+                    // A far horizon rather than the member's own expiry date.
+                    // Expiry is carried by the enable flag above, which we can
+                    // set the moment a payment lands; an endTime would need
+                    // rewriting on every renewal and would silently lock
+                    // somebody out if a sync were ever missed.
                     'endTime' => $user->validTo ?? now()->addYears(10)->format('Y-m-d\TH:i:s'),
                     'timeType' => 'local',
                 ],
@@ -228,6 +227,113 @@ class HikvisionDriver implements DeviceDriver
             'Device rejected user %s: %s',
             $user->biometricUserId,
             $this->errorMessage($modify) ?? $this->errorMessage($create) ?? 'unknown error',
+        ));
+    }
+
+    /**
+     * One UserInfo record from the device as our DTO.
+     *
+     * Null for a record with no usable employeeNo: a device that returns a
+     * blank one has nothing we can match a scan against, and a DeviceUser with
+     * an empty id would quietly collide with the next one.
+     *
+     * @param  array<mixed>  $item
+     */
+    private function mapDeviceUser(array $item): ?DeviceUser
+    {
+        $id = trim((string) ($item['employeeNo'] ?? $item['employeeNoString'] ?? ''));
+
+        if ($id === '') {
+            return null;
+        }
+
+        return new DeviceUser(
+            biometricUserId: $id,
+            name: $item['name'] ?? null,
+            fingerprintCount: (int) ($item['numOfFP'] ?? $item['fingerPrintNum'] ?? 0),
+            hasCard: (int) ($item['numOfCard'] ?? 0) > 0,
+            hasFace: (int) ($item['numOfFace'] ?? 0) > 0,
+            validFrom: $item['Valid']['beginTime'] ?? null,
+            validTo: $item['Valid']['endTime'] ?? null,
+            // Absent means the device does not model it; treat that as
+            // enabled rather than locking everybody out.
+            enabled: (bool) ($item['Valid']['enable'] ?? true),
+            raw: $item,
+        );
+    }
+
+    /**
+     * Look one user up by employeeNo.
+     *
+     * The device accepts an EmployeeNoList filter, but not every firmware
+     * honours it - some answer with the whole list regardless. So the filtered
+     * result is checked for an exact match and, failing that, the full list is
+     * walked. Costly only in the case where the fast path was never going to
+     * work.
+     */
+    public function findUser(string $biometricUserId): ?DeviceUser
+    {
+        $response = $this->send(fn () => $this->client()->post('/ISAPI/AccessControl/UserInfo/Search?format=json', [
+            'UserInfoSearchCond' => [
+                'searchID' => (string) Str::uuid(),
+                'searchResultPosition' => 0,
+                'maxResults' => 30,
+                'EmployeeNoList' => [
+                    ['employeeNo' => $biometricUserId],
+                ],
+            ],
+        ]));
+
+        if ($response->successful()) {
+            foreach ($response->json('UserInfoSearch.UserInfo') ?? [] as $item) {
+                $found = $this->mapDeviceUser($item);
+
+                if ($found !== null && $found->biometricUserId === $biometricUserId) {
+                    return $found;
+                }
+            }
+        }
+
+        foreach ($this->fetchUsers() as $user) {
+            if ($user->biometricUserId === $biometricUserId) {
+                return $user;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * SRS 7 - Release the door lock now.
+     *
+     * JSON first, because the rest of this driver speaks it and newer firmware
+     * prefers it. Older terminals only accept the XML body, and a door that
+     * will not open is not the place to be fussy about content types.
+     */
+    public function openDoor(int $doorNumber = 1): bool
+    {
+        $path = "/ISAPI/AccessControl/RemoteControl/door/{$doorNumber}";
+
+        $json = $this->send(fn () => $this->client()->put($path.'?format=json', [
+            'RemoteControlDoor' => ['cmd' => 'open'],
+        ]));
+
+        if ($this->isSuccessPayload($json)) {
+            return true;
+        }
+
+        $xml = $this->send(fn () => $this->client()
+            ->withBody('<RemoteControlDoor><cmd>open</cmd></RemoteControlDoor>', 'application/xml')
+            ->put($path));
+
+        if ($xml->successful()) {
+            return true;
+        }
+
+        throw new \RuntimeException(sprintf(
+            'Device refused to open door %d: %s',
+            $doorNumber,
+            $this->errorMessage($json) ?? "HTTP {$xml->status()}",
         ));
     }
 

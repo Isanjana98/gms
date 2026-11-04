@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import {
   Alert,
   Badge,
@@ -22,7 +22,7 @@ import { useToast } from '../components/Toast'
 import { api, errorMessage, fieldErrors } from '../lib/api'
 import { P, useAuth } from '../lib/auth'
 import { dateTime, relative } from '../lib/format'
-import type { BiometricDevice, BiometricUser, Paginated, SyncStatus } from '../lib/types'
+import type { BiometricDevice, BiometricUser, MemberSummary, Paginated, SyncStatus } from '../lib/types'
 
 interface SyncLog {
   id: number
@@ -48,6 +48,11 @@ export function DevicesPage() {
 
   const [editing, setEditing] = useState<BiometricDevice | null>(null)
   const [creating, setCreating] = useState(false)
+  // Opening a door asks for a reason first. It is a deliberate pause before a
+  // physical act, and the reason is what makes the audit entry answerable
+  // when somebody reads it back a month later.
+  const [doorFor, setDoorFor] = useState<BiometricDevice | null>(null)
+  const [linking, setLinking] = useState<BiometricUser | null>(null)
 
   const devices = useQuery({
     queryKey: ['devices'],
@@ -111,8 +116,20 @@ export function DevicesPage() {
     onError: (error) => toast.error(errorMessage(error)),
   })
 
+  const openDoor = useMutation({
+    mutationFn: async ({ deviceId, reason }: { deviceId: number; reason: string }) =>
+      (await api.post(`/biometric/devices/${deviceId}/open-door`, { reason })).data,
+    onSuccess: (data: { message: string }) => {
+      toast.success(data.message)
+      setDoorFor(null)
+    },
+    onError: (error) => toast.error(errorMessage(error)),
+  })
+
   const canManage = can(P.devicesManage)
   const canSync = can(P.devicesSync)
+  const canOpenDoor = can(P.devicesOpenDoor)
+  const canEnrol = can(P.enrollmentManage)
 
   return (
     <>
@@ -216,6 +233,11 @@ export function DevicesPage() {
                         <Button size="sm" variant="secondary" loading={test.isPending} onClick={() => test.mutate(device.id)}>
                           Test
                         </Button>
+                        {canOpenDoor && device.is_active && (
+                          <Button size="sm" variant="ghost" onClick={() => setDoorFor(device)}>
+                            Open door
+                          </Button>
+                        )}
                         {canSync && (
                           <>
                             <Button size="sm" variant="ghost" onClick={() => sync.mutate(device.id)}>
@@ -260,6 +282,7 @@ export function DevicesPage() {
                   <Th>Biometric ID</Th>
                   <Th>Name on device</Th>
                   <Th>Device</Th>
+                  <Th align="right" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink-100">
@@ -270,6 +293,13 @@ export function DevicesPage() {
                     </Td>
                     <Td>{user.device_user_name ?? <span className="text-ink-400">—</span>}</Td>
                     <Td>{user.device?.name ?? `#${user.device_id}`}</Td>
+                    <Td align="right">
+                      {canEnrol && (
+                        <Button size="sm" variant="secondary" onClick={() => setLinking(user)}>
+                          Link to member
+                        </Button>
+                      )}
+                    </Td>
                   </tr>
                 ))}
               </tbody>
@@ -319,7 +349,188 @@ export function DevicesPage() {
           }}
         />
       )}
+
+      {doorFor && (
+        <OpenDoorModal
+          device={doorFor}
+          pending={openDoor.isPending}
+          onClose={() => setDoorFor(null)}
+          onConfirm={(reason) => openDoor.mutate({ deviceId: doorFor.id, reason })}
+        />
+      )}
+
+      {linking && (
+        <LinkMemberModal
+          deviceUser={linking}
+          onClose={() => setLinking(null)}
+          onLinked={(message) => {
+            setLinking(null)
+            toast.success(message)
+            refresh()
+          }}
+        />
+      )}
     </>
+  )
+}
+
+/**
+ * Attach a device user the reader already knows to a member.
+ *
+ * The scans this device user has already made are sitting in the event log
+ * unusable, so the count recovered is reported back rather than left for
+ * somebody to notice on the attendance screen.
+ */
+function LinkMemberModal({
+  deviceUser,
+  onClose,
+  onLinked,
+}: {
+  deviceUser: BiometricUser
+  onClose: () => void
+  onLinked: (message: string) => void
+}) {
+  const [term, setTerm] = useState('')
+  const [debounced, setDebounced] = useState('')
+  const [selected, setSelected] = useState<MemberSummary | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(term.trim()), 250)
+    return () => clearTimeout(timer)
+  }, [term])
+
+  const results = useQuery({
+    queryKey: ['link-member-search', debounced],
+    queryFn: async () =>
+      (await api.get<Paginated<MemberSummary>>('/members', { params: { search: debounced, per_page: 8 } })).data,
+    enabled: debounced.length >= 2,
+  })
+
+  const link = useMutation({
+    mutationFn: async () =>
+      (await api.post(`/biometric/users/${deviceUser.id}/match`, { member_id: selected!.id })).data,
+    onSuccess: (data: { message: string }) => onLinked(data.message),
+    onError: (err) => setError(errorMessage(err)),
+  })
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Link device user ${deviceUser.biometric_user_id}`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={!selected} loading={link.isPending} onClick={() => link.mutate()}>
+            Link
+          </Button>
+        </>
+      }
+    >
+      {error && (
+        <div className="mb-4">
+          <Alert tone="danger">{error}</Alert>
+        </div>
+      )}
+
+      <p className="text-sm text-ink-700">
+        <code className="rounded bg-ink-100 px-1.5 py-0.5 text-xs">{deviceUser.biometric_user_id}</code>
+        {deviceUser.device_user_name ? ` — “${deviceUser.device_user_name}” on the reader` : ''}
+        {deviceUser.device?.name ? ` · ${deviceUser.device.name}` : ''}
+      </p>
+
+      <div className="mt-4">
+        <Field label="Member" hint="Search by name or membership number, e.g. GM-2026-00001.">
+          <Input
+            value={selected ? `${selected.full_name} · ${selected.membership_number}` : term}
+            onChange={(e) => {
+              setSelected(null)
+              setTerm(e.target.value)
+            }}
+            placeholder="GM-2026-00001"
+            autoFocus
+          />
+        </Field>
+      </div>
+
+      {!selected && debounced.length >= 2 && (
+        <div className="mt-2 max-h-56 overflow-y-auto rounded border border-ink-200">
+          {results.isFetching && !results.data ? (
+            <p className="px-3 py-2 text-sm text-ink-500">Searching…</p>
+          ) : !results.data?.data?.length ? (
+            <p className="px-3 py-2 text-sm text-ink-500">No member matches “{debounced}”.</p>
+          ) : (
+            <ul className="divide-y divide-ink-100">
+              {results.data.data.map((member) => (
+                <li key={member.id}>
+                  <button
+                    type="button"
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-ink-50"
+                    onClick={() => setSelected(member)}
+                  >
+                    <span className="font-medium text-ink-900">{member.full_name}</span>
+                    <span className="block text-xs text-ink-500">{member.membership_number}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      <div className="mt-4">
+        <Alert tone="info">
+          Any scans this device user has already made become this member&apos;s attendance, backdated to when they
+          actually happened.
+        </Alert>
+      </div>
+    </Modal>
+  )
+}
+
+function OpenDoorModal({
+  device,
+  pending,
+  onClose,
+  onConfirm,
+}: {
+  device: BiometricDevice
+  pending: boolean
+  onClose: () => void
+  onConfirm: (reason: string) => void
+}) {
+  const [reason, setReason] = useState('')
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Open ${device.name}`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button loading={pending} onClick={() => onConfirm(reason.trim())}>
+            Open the door
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm text-ink-700">
+        This releases the lock on <strong>{device.name}</strong> straight away. It is recorded against your name
+        whether or not the door actually opens.
+      </p>
+
+      <div className="mt-4">
+        <Field label="Why" hint="Shown in the audit log. “Finger would not read”, “delivery”, “visitor”.">
+          <Input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={255} autoFocus />
+        </Field>
+      </div>
+    </Modal>
   )
 }
 

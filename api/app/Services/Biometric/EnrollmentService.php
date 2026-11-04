@@ -7,6 +7,7 @@ use App\Models\BiometricUser;
 use App\Models\Member;
 use App\Services\Biometric\DTO\DeviceUser;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * SRS 8 - Fingerprint registration.
@@ -45,7 +46,25 @@ class EnrollmentService
 
             $this->assertIdAvailable($device, $id, $member);
 
-            $mapping = $existing ?? new BiometricUser([
+            // An unmatched row already holding this id is the device user we
+            // are claiming, not a clash. Taking it over rather than inserting
+            // a second row matters for more than the unique index: that row
+            // is what the reader's own scans have been filing themselves
+            // against, so adopting it is what makes them this member's.
+            $unmatched = $existing === null
+                ? BiometricUser::query()
+                    ->where('device_id', $device->getKey())
+                    ->where('biometric_user_id', $id)
+                    ->whereNull('member_id')
+                    ->withTrashed()
+                    ->first()
+                : null;
+
+            if ($unmatched !== null) {
+                $unmatched->restore();
+            }
+
+            $mapping = $existing ?? $unmatched ?? new BiometricUser([
                 'device_id' => $device->getKey(),
                 'member_id' => $member->getKey(),
             ]);
@@ -72,6 +91,7 @@ class EnrollmentService
             $this->drivers->for($device)->upsertUser(new DeviceUser(
                 biometricUserId: $mapping->biometric_user_id,
                 name: $member->full_name,
+                enabled: $this->shouldAdmit($member),
             ));
 
             $mapping->forceFill([
@@ -146,6 +166,186 @@ class EnrollmentService
         return $mapping->refresh();
     }
 
+    /**
+     * Change the id a member is known by on one reader.
+     *
+     * The reason this exists: the number on the device and the member's id in
+     * here drift apart. Somebody enrols a member at the terminal before adding
+     * them to the system, or a reader arrives with users already on it, and
+     * from then on the desk is reading 47 off a screen while the record says
+     * 112. Making them agree by hand means deleting and re-enrolling, which
+     * costs the member another trip.
+     *
+     * **Which way it goes decides whether the fingerprint survives**, and that
+     * is the whole of the decision:
+     *
+     *  - The device already has a user with the new id. Nothing on the reader
+     *    needs to change - we simply point the mapping at it, and the finger
+     *    already enrolled there keeps working. This is the case worth aiming
+     *    for, and it is what happens when you set the system's id to match
+     *    what the terminal already shows.
+     *
+     *  - The device does not have that id. Then it has to be created and the
+     *    old one removed, and the fingerprint does not come with it: Hikvision
+     *    stores templates against employeeNo and offers no way to move one.
+     *    The member must present their finger again. We say so rather than
+     *    letting reception find out when somebody cannot get in.
+     *
+     * `$updateDevice = false` changes nothing on the reader and only re-points
+     * our record. That is the case where the terminal is already right and we
+     * are the ones out of step - reading 47 off the device screen and typing
+     * it in here - and it is also the only option when the reader cannot be
+     * reached from the server, which is how a hosted installation with a
+     * push-only device works. The caller is asserting the id exists there; we
+     * cannot check, so the message says as much.
+     *
+     * @return array{mapping: BiometricUser, reenrol: bool, message: string}
+     */
+    public function changeId(BiometricUser $mapping, string $newId, bool $updateDevice = true): array
+    {
+        $newId = trim($newId);
+        $oldId = $mapping->biometric_user_id;
+
+        if ($newId === $oldId) {
+            return [
+                'mapping' => $mapping,
+                'reenrol' => false,
+                'message' => "Already using ID {$newId} on {$mapping->device?->name}.",
+            ];
+        }
+
+        $member = $mapping->member;
+
+        if ($member === null) {
+            throw new \RuntimeException('This device user is not matched to a member yet. Match it first.');
+        }
+
+        $device = $mapping->device;
+
+        if ($device === null) {
+            throw new \RuntimeException('This mapping has no device.');
+        }
+
+        $this->assertIdAvailable($device, $newId, $member);
+
+        if (! $updateDevice) {
+            $this->repoint($mapping, $member, $device, $newId, reenrol: false, onDevice: null);
+
+            return [
+                'mapping' => $mapping->refresh(),
+                'reenrol' => false,
+                'message' => sprintf(
+                    'ID changed from %s to %s in the system only. The reader was not contacted, so %s must already be the number it shows for %s.',
+                    $oldId, $newId, $newId, $member->full_name,
+                ),
+            ];
+        }
+
+        $driver = $this->drivers->for($device);
+
+        // Ask the reader, not our own records. A row here saying the id is
+        // free proves nothing about what is on the hardware, and getting this
+        // backwards is what silently wipes a fingerprint.
+        $onDevice = $driver->findUser($newId);
+        $reenrol = $onDevice === null;
+
+        if ($reenrol) {
+            // Create before destroy. If the create fails we have changed
+            // nothing, and the member keeps the access they had.
+            $driver->upsertUser(new DeviceUser(
+                biometricUserId: $newId,
+                name: $member->full_name,
+                enabled: $this->shouldAdmit($member),
+            ));
+
+            try {
+                $driver->deleteUser($oldId);
+            } catch (\Throwable $e) {
+                // The new identity is live, so the member is not locked out.
+                // The old one lingering is untidy rather than dangerous, and
+                // saying so is better than unwinding a change that worked.
+                Log::warning('Old biometric id left on the device after a change.', [
+                    'device' => $device->code,
+                    'old_id' => $oldId,
+                    'new_id' => $newId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        } else {
+            // Adopting an identity already on the reader: make sure its name
+            // reads as the member, so the terminal's own screen agrees with us.
+            $driver->upsertUser(new DeviceUser(
+                biometricUserId: $newId,
+                name: $member->full_name,
+                enabled: $this->shouldAdmit($member),
+            ));
+        }
+
+        $this->repoint($mapping, $member, $device, $newId, $reenrol, $onDevice);
+
+        return [
+            'mapping' => $mapping->refresh(),
+            'reenrol' => $reenrol,
+            'message' => $reenrol
+                ? sprintf(
+                    'ID changed from %s to %s on %s. The reader had no user %s, so one was created and the old one removed — %s must enrol their fingerprint again.',
+                    $oldId, $newId, $device->name, $newId, $member->full_name,
+                )
+                : sprintf(
+                    'ID changed from %s to %s on %s. The reader already had user %s, so the existing fingerprint still works.',
+                    $oldId, $newId, $device->name, $newId,
+                ),
+        ];
+    }
+
+    /**
+     * Move our record onto the new id.
+     *
+     * `$onDevice` is what the reader says about that id, where we were able to
+     * ask. Null means either the id is new to the device or we never looked;
+     * in both cases the safe reading is that no fingerprint is attached yet,
+     * so the mapping goes back to PENDING and reception is told to verify.
+     */
+    private function repoint(
+        BiometricUser $mapping,
+        Member $member,
+        BiometricDevice $device,
+        string $newId,
+        bool $reenrol,
+        ?DeviceUser $onDevice,
+    ): void {
+        DB::transaction(function () use ($mapping, $device, $newId, $member, $reenrol, $onDevice) {
+            // An unmatched row holding this id is the same device user we are
+            // adopting, and the unique index will not take two. It is
+            // superseded, not lost: the mapping below inherits its enrolment.
+            BiometricUser::query()
+                ->where('device_id', $device->getKey())
+                ->where('biometric_user_id', $newId)
+                ->whereKeyNot($mapping->getKey())
+                ->withTrashed()
+                ->get()
+                ->each
+                ->forceDelete();
+
+            $fingerprints = $reenrol ? 0 : ($onDevice?->fingerprintCount ?? 0);
+
+            $mapping->forceFill([
+                'biometric_user_id' => $newId,
+                'device_user_name' => $member->full_name,
+                'fingerprint_count' => $fingerprints,
+                'has_card' => $reenrol ? false : ($onDevice?->hasCard ?? false),
+                'has_face' => $reenrol ? false : ($onDevice?->hasFace ?? false),
+                // Only an answer from the device earns ENROLLED. Assuming it
+                // would show a green tick next to a finger nobody has placed.
+                'enrollment_status' => $fingerprints > 0 ? 'ENROLLED' : 'PENDING',
+                'verified_at' => $fingerprints > 0 ? $mapping->verified_at : null,
+                'sync_status' => 'SYNCED',
+                'sync_error' => null,
+                'last_synced_at' => now(),
+            ])->save();
+        });
+    }
+
     /** Remove the member from the reader and retire the mapping. */
     public function revoke(BiometricUser $mapping): void
     {
@@ -169,6 +369,26 @@ class EnrollmentService
             'is_active' => false,
             'enrollment_status' => 'REMOVED',
         ])->save();
+    }
+
+    /**
+     * Whether the reader should currently admit this member.
+     *
+     * The same two questions the turnstile asks at scan time - is the member
+     * themselves permitted, and is there a live term - so the hardware and the
+     * software cannot disagree about who is allowed in.
+     *
+     * The scan-time check stays regardless. This only saves the member the
+     * walk to a door that was never going to open, and keeps the terminal's
+     * own user list honest for anyone reading it off the device.
+     */
+    public function shouldAdmit(Member $member): bool
+    {
+        if (! $member->status->allowsEntry()) {
+            return false;
+        }
+
+        return $member->currentMembership?->allowsEntryOn() === true;
     }
 
     /**

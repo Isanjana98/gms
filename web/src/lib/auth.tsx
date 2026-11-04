@@ -140,6 +140,7 @@ export const P = {
   devicesView: 'devices.view',
   devicesManage: 'devices.manage',
   devicesSync: 'devices.sync',
+  devicesOpenDoor: 'devices.open_door',
   enrollmentManage: 'enrollment.manage',
   trainersView: 'trainers.view',
   trainersManage: 'trainers.manage',

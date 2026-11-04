@@ -49,7 +49,27 @@ interface DeviceDriver
      */
     public function upsertUser(DeviceUser $user): bool;
 
+    /**
+     * Look one user up by the id the device knows them by.
+     *
+     * Returns null when the device has no such user. Separate from
+     * fetchUsers() because the two questions have different costs: checking
+     * whether one id is taken should not drain a reader holding a thousand
+     * records.
+     */
+    public function findUser(string $biometricUserId): ?DeviceUser;
+
     public function deleteUser(string $biometricUserId): bool;
+
+    /**
+     * Release the door lock now.
+     *
+     * For the case the fingerprint reader cannot help with: a member whose
+     * finger will not read, a visitor, a delivery. Every call is audited by
+     * the caller, because "the door opened and no scan explains it" is a
+     * question somebody will eventually ask.
+     */
+    public function openDoor(int $doorNumber = 1): bool;
 
     /**
      * Interpret a device-initiated push notification.

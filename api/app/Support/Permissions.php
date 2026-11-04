@@ -104,6 +104,16 @@ final class Permissions
 
     public const DEVICES_SYNC = 'devices.sync';
 
+    /**
+     * Release the door lock from the system.
+     *
+     * Separate from DEVICES_MANAGE, which is about configuring hardware. This
+     * is an operational act somebody at the counter does several times a day,
+     * and it has to be grantable without also handing over the device's
+     * address and password.
+     */
+    public const DEVICES_OPEN_DOOR = 'devices.open_door';
+
     public const ENROLLMENT_MANAGE = 'enrollment.manage';
 
     // People & operations
@@ -233,6 +243,9 @@ final class Permissions
             self::ATTENDANCE_VIEW, self::ATTENDANCE_MANAGE,
             self::ENROLLMENT_MANAGE,
             self::DEVICES_VIEW,
+            // Letting somebody in whose finger will not read is reception's
+            // job, and it happens at the counter while the member waits.
+            self::DEVICES_OPEN_DOOR,
             self::TRAINERS_VIEW,
             // Reception books members in and is asked about their schedule at
             // the counter, so they can see and edit every member's.

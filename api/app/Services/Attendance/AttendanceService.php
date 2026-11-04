@@ -41,10 +41,24 @@ class AttendanceService
         AttendanceDirection $hint = AttendanceDirection::UNKNOWN,
         VerificationType $verification = VerificationType::FINGERPRINT,
         AttendanceType $type = AttendanceType::BIOMETRIC,
+        /**
+         * Whether the membership check may refuse this scan.
+         *
+         * False when recording something that has already happened - replaying
+         * scans a reader made before anybody linked the member, where the door
+         * opened days ago and the person was demonstrably there. Refusing it
+         * would not keep anybody out; it would only throw away the record of a
+         * visit, on the strength of a membership state from today rather than
+         * from the day they walked in.
+         *
+         * The visit is still stored with `membership_valid` and the reason, so
+         * a report can show who was in the building on a lapsed membership.
+         */
+        bool $enforceMembership = true,
     ): ScanOutcome {
         $branchId = $device?->branch_id ?? $member->branch_id;
 
-        return DB::transaction(function () use ($member, $time, $device, $hint, $verification, $type, $branchId) {
+        return DB::transaction(function () use ($member, $time, $device, $hint, $verification, $type, $branchId, $enforceMembership) {
             // Lock the member row for the duration. Two readers at the same
             // door, or a pull and a push arriving together, would otherwise
             // both find "no open visit" and open two.
@@ -62,7 +76,8 @@ class AttendanceService
             // Validation gates entry, not exit. Someone inside the building
             // must always be able to scan out, even if their membership
             // lapsed at midnight while they were on the treadmill.
-            if ($direction === AttendanceDirection::IN
+            if ($enforceMembership
+                && $direction === AttendanceDirection::IN
                 && ! $check->valid
                 && $this->settings->rejectsInvalidMembership($branchId)) {
                 return ScanOutcome::rejected($check->message);

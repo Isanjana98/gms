@@ -33,6 +33,17 @@ class FakeDeviceDriver implements DeviceDriver
 
     public static array $windows = [];
 
+    /** @var array<int, array{id: string, enabled: bool}> */
+    public static array $upsertedWith = [];
+
+    /** @var array<int, int> */
+    public static array $doorsOpened = [];
+
+    public static ?string $throwOnOpenDoor = null;
+
+    /** Biometric user id whose upsert should fail, as an offline reader would. */
+    public static ?string $throwOnUpsertFor = null;
+
     public function __construct(private readonly BiometricDevice $device) {}
 
     public static function reset(): void
@@ -40,9 +51,13 @@ class FakeDeviceDriver implements DeviceDriver
         self::$events = [];
         self::$users = [];
         self::$uploaded = [];
+        self::$upsertedWith = [];
         self::$deleted = [];
         self::$windows = [];
+        self::$doorsOpened = [];
         self::$throwOnFetch = null;
+        self::$throwOnOpenDoor = null;
+        self::$throwOnUpsertFor = null;
     }
 
     public function testConnection(): DeviceInfo
@@ -73,14 +88,54 @@ class FakeDeviceDriver implements DeviceDriver
 
     public function upsertUser(DeviceUser $user): bool
     {
+        if (self::$throwOnUpsertFor === $user->biometricUserId) {
+            throw new \RuntimeException('Device unreachable.');
+        }
+
         self::$uploaded[] = $user->biometricUserId;
+        self::$upsertedWith[] = ['id' => $user->biometricUserId, 'enabled' => $user->enabled];
+
+        // Behave like a device: the user is there afterwards, so a findUser()
+        // that follows an upsert tells the truth.
+        self::$users = array_values(array_filter(
+            self::$users,
+            fn (DeviceUser $existing) => $existing->biometricUserId !== $user->biometricUserId,
+        ));
+        self::$users[] = $user;
 
         return true;
+    }
+
+    public function findUser(string $biometricUserId): ?DeviceUser
+    {
+        foreach (self::$users as $user) {
+            if ($user->biometricUserId === $biometricUserId) {
+                return $user;
+            }
+        }
+
+        return null;
     }
 
     public function deleteUser(string $biometricUserId): bool
     {
         self::$deleted[] = $biometricUserId;
+
+        self::$users = array_values(array_filter(
+            self::$users,
+            fn (DeviceUser $user) => $user->biometricUserId !== $biometricUserId,
+        ));
+
+        return true;
+    }
+
+    public function openDoor(int $doorNumber = 1): bool
+    {
+        if (self::$throwOnOpenDoor !== null) {
+            throw new \RuntimeException(self::$throwOnOpenDoor);
+        }
+
+        self::$doorsOpened[] = $doorNumber;
 
         return true;
     }

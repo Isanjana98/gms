@@ -248,6 +248,8 @@ export interface BiometricUser {
   sync_error?: string | null
   verified_at?: string | null
   is_active: boolean
+  /** Whether the reader will currently admit them, as last pushed to it. */
+  access_enabled?: boolean
   member?: MemberSummary
   device?: BiometricDevice
 }

@@ -120,6 +120,50 @@ class BiometricDeviceController extends Controller
         ], $log->status === 'SUCCESS' ? 200 : 422);
     }
 
+    /**
+     * POST /api/biometric/devices/{device}/open-door
+     *
+     * Releases the lock for the usual reasons a reader cannot help with: a
+     * finger that will not read, a visitor, a delivery.
+     *
+     * **Audited before the attempt, not after.** The record is of somebody
+     * asking for the door, which is the thing worth keeping either way - and
+     * writing it only on success would leave a failed attempt invisible,
+     * which is exactly the attempt you would want to see.
+     */
+    public function openDoor(Request $request, BiometricDevice $device): JsonResponse
+    {
+        abort_unless($request->user()->can(Permissions::DEVICES_OPEN_DOOR), 403);
+
+        $data = $request->validate([
+            'door' => ['nullable', 'integer', 'min:1', 'max:8'],
+            'reason' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $door = (int) ($data['door'] ?? 1);
+
+        $device->recordAudit('door_opened', null, [
+            'door' => $door,
+            'reason' => $data['reason'] ?? null,
+        ]);
+
+        if (! $device->is_active) {
+            return response()->json(['message' => 'This device is inactive.'], 422);
+        }
+
+        try {
+            $this->drivers->for($device)->openDoor($door);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'message' => 'Could not open the door: '.$e->getMessage(),
+            ], 422);
+        }
+
+        return response()->json([
+            'message' => "{$device->name} unlocked.",
+        ]);
+    }
+
     /** GET /api/biometric/drivers - which vendors this build supports (SRS 35). */
     public function drivers(): JsonResponse
     {

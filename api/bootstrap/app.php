@@ -5,6 +5,7 @@ use App\Console\Commands\BackupDatabase;
 use App\Console\Commands\DispatchNotifications;
 use App\Console\Commands\ExpireMemberships;
 use App\Console\Commands\SyncBiometricAttendance;
+use App\Console\Commands\SyncDeviceAccess;
 use App\Http\Middleware\AuthenticateFromSessionCookie;
 use App\Http\Middleware\EnsureTokenBelongsToMember;
 use App\Http\Middleware\EnsureTokenBelongsToStaff;
@@ -163,6 +164,14 @@ return Application::configure(basePath: dirname(__DIR__))
 
         // SRS 6 - Expire lapsed memberships just after midnight.
         $schedule->command(ExpireMemberships::class)->dailyAt('00:15');
+
+        // Then tell the readers. Ordered after the expiry sweep on purpose:
+        // run the other way round and a membership that lapsed tonight would
+        // keep opening the door for another day.
+        $schedule->command(SyncDeviceAccess::class)
+            ->dailyAt('00:30')
+            ->withoutOverlapping(30)
+            ->when(fn () => (bool) config('gms.biometric.sync_enabled', true));
 
         // SRS 11 - Close visits nobody scanned out of.
         $schedule->command(AutoCloseAttendance::class)

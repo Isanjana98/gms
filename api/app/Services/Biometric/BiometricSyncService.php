@@ -231,15 +231,62 @@ class BiometricSyncService
     /** SRS 9 step 3 - biometric user id to gym member. */
     private function resolveMember(BiometricDevice $device, DeviceEvent $event): ?Member
     {
-        $mapping = BiometricUser::query()
+        return $this->resolveMapping($device, $event->biometricUserId)?->member;
+    }
+
+    /**
+     * The member mapped to one device user id, allowing for leading zeros.
+     *
+     * An exact match always wins. The fallback exists because the number a
+     * terminal prints on its own screen is not always the string it sends in
+     * an event: `01` and `1` are the same person to everybody except a string
+     * comparison, and someone who types what the screen showed would get a
+     * mapping that silently never matches a scan. The symptom is the worst
+     * kind - attendance quietly piling up as "unmatched" while the enrolment
+     * screen says the member is registered and verified.
+     *
+     * The fallback only runs when the exact lookup found nothing, only for
+     * ids that are entirely digits, and only when it is unambiguous. A device
+     * genuinely holding both `1` and `01` as separate users resolves to
+     * neither, which leaves the scan unmatched and visible rather than
+     * guessing which member walked in.
+     */
+    private function resolveMapping(BiometricDevice $device, ?string $biometricUserId): ?BiometricUser
+    {
+        $id = trim((string) $biometricUserId);
+
+        if ($id === '') {
+            return null;
+        }
+
+        $exact = BiometricUser::query()
             ->where('device_id', $device->getKey())
-            ->where('biometric_user_id', $event->biometricUserId)
+            ->where('biometric_user_id', $id)
             ->whereNotNull('member_id')
             ->active()
             ->with('member')
             ->first();
 
-        return $mapping?->member;
+        if ($exact !== null) {
+            return $exact;
+        }
+
+        if (! ctype_digit($id)) {
+            return null;
+        }
+
+        $candidates = BiometricUser::query()
+            ->where('device_id', $device->getKey())
+            ->whereNotNull('member_id')
+            ->active()
+            ->whereRaw('CAST(biometric_user_id AS UNSIGNED) = ?', [(int) $id])
+            ->with('member')
+            ->get()
+            // CAST turns any non-numeric string into 0, which would otherwise
+            // make every such mapping a candidate for the id "0".
+            ->filter(fn (BiometricUser $mapping) => ctype_digit((string) $mapping->biometric_user_id));
+
+        return $candidates->count() === 1 ? $candidates->first() : null;
     }
 
     /**
@@ -261,6 +308,122 @@ class BiometricSyncService
                 'last_synced_at' => now(),
             ],
         );
+    }
+
+    /**
+     * Turn scans that arrived before the link existed into attendance.
+     *
+     * Every unmatched scan was already stored in full - which reader, which
+     * device user, when, and in which direction - precisely so that linking
+     * the member afterwards is not too late. Without this, the gap between a
+     * member starting to use the reader and somebody linking them in here is
+     * attendance that is visibly recorded and permanently unusable.
+     *
+     * Replayed oldest first, because the direction of a scan depends on
+     * whether the member is currently inside: processing them out of order
+     * would pair the wrong entries with the wrong exits.
+     *
+     * One honest limit: membership validation runs against the member's state
+     * **now**, not as it was on the day of the scan. Reconstructing a
+     * membership history that has since been renewed, suspended or expired
+     * would be guesswork, and the alternative - refusing to recover anything
+     * - is worse.
+     *
+     * @return array{replayed: int, recorded: int, rejected: int}
+     */
+    public function replayUnmatched(BiometricUser $mapping): array
+    {
+        $member = $mapping->member;
+        $device = $mapping->device;
+
+        if ($member === null || $device === null) {
+            return ['replayed' => 0, 'recorded' => 0, 'rejected' => 0];
+        }
+
+        $replayed = 0;
+        $recorded = 0;
+        $rejected = 0;
+
+        BiometricEventLog::query()
+            ->where('device_id', $device->getKey())
+            ->where('process_status', EventProcessStatus::UNMATCHED)
+            ->whereNull('member_id')
+            ->where(function ($query) use ($mapping) {
+                $query->where('biometric_user_id', $mapping->biometric_user_id);
+
+                // The same leniency the live path uses: a scan logged as `01`
+                // belongs to the member mapped to `1`.
+                if (ctype_digit((string) $mapping->biometric_user_id)) {
+                    $query->orWhereRaw('CAST(biometric_user_id AS UNSIGNED) = ?', [(int) $mapping->biometric_user_id]);
+                }
+            })
+            ->orderBy('event_time')
+            ->orderBy('id')
+            ->chunkById(200, function ($events) use ($mapping, $member, $device, &$replayed, &$recorded, &$rejected) {
+                foreach ($events as $event) {
+                    // The CAST above is a coarse filter - it turns any
+                    // non-numeric string into 0, so an id like "ENT" would be
+                    // swept in alongside a mapping of "0". Decide precisely
+                    // here before writing anybody's attendance.
+                    if (! $this->sameDeviceUser((string) $event->biometric_user_id, (string) $mapping->biometric_user_id)) {
+                        continue;
+                    }
+
+                    $replayed++;
+
+                    $outcome = $this->attendance->recordScan(
+                        member: $member,
+                        time: $event->event_time,
+                        device: $device,
+                        hint: $event->direction,
+                        verification: $event->verification_type,
+                        // The door already opened, days ago. Refusing to
+                        // record it now would keep nobody out - it would only
+                        // throw the visit away, and on the strength of a
+                        // membership state from today rather than from the
+                        // day they actually walked in. The visit is stored
+                        // flagged instead, exactly as a live scan is when the
+                        // branch does not refuse invalid memberships.
+                        enforceMembership: false,
+                    );
+
+                    $event->forceFill([
+                        'member_id' => $member->getKey(),
+                        'attendance_id' => $outcome->attendance?->getKey(),
+                        'process_status' => $outcome->status,
+                        'process_message' => substr($outcome->message, 0, 255),
+                    ])->save();
+
+                    if ($outcome->status === EventProcessStatus::REJECTED) {
+                        $rejected++;
+                    } elseif ($outcome->attendance !== null) {
+                        $recorded++;
+                    }
+                }
+            });
+
+        return ['replayed' => $replayed, 'recorded' => $recorded, 'rejected' => $rejected];
+    }
+
+    /**
+     * Whether two device user ids name the same user.
+     *
+     * Identical strings, or the same number written with different leading
+     * zeros. "ENT" and "0" are not the same user, which is the case the plain
+     * CAST comparison gets wrong.
+     */
+    private function sameDeviceUser(string $a, string $b): bool
+    {
+        $a = trim($a);
+        $b = trim($b);
+
+        if ($a === $b) {
+            return true;
+        }
+
+        return $a !== '' && $b !== ''
+            && ctype_digit($a) && ctype_digit($b)
+            && ltrim($a, '0') === ltrim($b, '0');
     }
 
     /**

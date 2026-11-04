@@ -32,6 +32,7 @@ import { date, dateTime, duration, expiryLabel, money, relative, time } from '..
 import type {
   Attendance,
   BiometricDevice,
+  BiometricUser,
   Member,
   Membership,
   MembershipPlan,
@@ -610,6 +611,8 @@ function FingerprintTab({
     onError: (error) => setMessage({ tone: 'danger', text: errorMessage(error) }),
   })
 
+  const [changingId, setChangingId] = useState<BiometricUser | null>(null)
+
   const mappings = member.biometric_users ?? []
 
   return (
@@ -652,19 +655,25 @@ function FingerprintTab({
                     <div className="flex gap-1.5">
                       <StatusBadge status={mapping.enrollment_status} />
                       {mapping.sync_status === 'FAILED' && <Badge tone="danger">not on device</Badge>}
+                      {mapping.access_enabled === false && <Badge tone="warning">door disabled</Badge>}
                     </div>
                     {mapping.sync_error && <p className="mt-1 text-xs text-red-600">{mapping.sync_error}</p>}
                   </Td>
                   <Td align="right">
                     {can(P.enrollmentManage) && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        loading={verify.isPending}
-                        onClick={() => verify.mutate(mapping.id)}
-                      >
-                        Verify on device
-                      </Button>
+                      <div className="flex flex-wrap justify-end gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          loading={verify.isPending}
+                          onClick={() => verify.mutate(mapping.id)}
+                        >
+                          Verify on device
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setChangingId(mapping)}>
+                          Change ID
+                        </Button>
+                      </div>
                     )}
                   </Td>
                 </tr>
@@ -681,7 +690,123 @@ function FingerprintTab({
           )}
         </>
       )}
+
+      {changingId && (
+        <ChangeBiometricIdModal
+          mapping={changingId}
+          memberName={member.full_name}
+          onClose={() => setChangingId(null)}
+          onDone={(text) => {
+            setChangingId(null)
+            setMessage({ tone: 'success', text })
+            onChanged()
+          }}
+        />
+      )}
     </div>
+  )
+}
+
+/**
+ * Make the number on the reader and the number in here agree.
+ *
+ * The two ways of doing that are not equivalent and the difference costs the
+ * member a trip, so the choice is put in front of whoever is doing it rather
+ * than decided for them. The default is the safe one: correct our record to
+ * match the terminal, and leave the hardware alone.
+ */
+function ChangeBiometricIdModal({
+  mapping,
+  memberName,
+  onClose,
+  onDone,
+}: {
+  mapping: BiometricUser
+  memberName: string
+  onClose: () => void
+  onDone: (message: string) => void
+}) {
+  const [value, setValue] = useState(mapping.biometric_user_id)
+  const [updateDevice, setUpdateDevice] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const change = useMutation({
+    mutationFn: async () =>
+      (
+        await api.post(`/biometric/users/${mapping.id}/change-id`, {
+          biometric_user_id: value.trim(),
+          update_device: updateDevice,
+        })
+      ).data,
+    onSuccess: (data: { message: string }) => onDone(data.message),
+    onError: (err) => setError(errorMessage(err)),
+  })
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Change biometric ID"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button loading={change.isPending} onClick={() => change.mutate()}>
+            Change ID
+          </Button>
+        </>
+      }
+    >
+      {error && (
+        <div className="mb-4">
+          <Alert tone="danger">{error}</Alert>
+        </div>
+      )}
+
+      <p className="text-sm text-ink-700">
+        {memberName} is currently <code className="rounded bg-ink-100 px-1.5 py-0.5 text-xs">{mapping.biometric_user_id}</code>{' '}
+        on {mapping.device?.name ?? 'this reader'}.
+      </p>
+
+      <div className="mt-4">
+        <Field label="New ID" hint="Digits only — the number the device itself displays.">
+          <Input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            inputMode="numeric"
+            maxLength={20}
+            autoFocus
+          />
+        </Field>
+      </div>
+
+      <label className="mt-4 flex cursor-pointer items-start gap-2.5">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={updateDevice}
+          onChange={(e) => setUpdateDevice(e.target.checked)}
+        />
+        <span className="text-sm text-ink-700">
+          Change it on the reader too
+          <span className="mt-0.5 block text-xs text-ink-500">
+            Leave this off if you are correcting our record to match what the terminal already shows — nothing on
+            the hardware moves and the fingerprint keeps working.
+          </span>
+        </span>
+      </label>
+
+      {updateDevice && (
+        <div className="mt-3">
+          <Alert tone="warning">
+            If the reader does not already have that ID, the user is recreated under the new number and{' '}
+            <strong>the fingerprint does not come with it</strong> — {memberName} will have to enrol again at the
+            device. The reader stores fingerprints against the ID and offers no way to move one.
+          </Alert>
+        </div>
+      )}
+    </Modal>
   )
 }
 
@@ -1078,6 +1203,11 @@ function EnrolModal({
   onDone: (message: string) => void
 }) {
   const [deviceId, setDeviceId] = useState('')
+  // Optional. Left blank the member gets their own member ID, which keeps the
+  // two sides in step without anybody thinking about it. Filled in, it claims
+  // a user the reader already has - including whatever that user has already
+  // scanned.
+  const [biometricId, setBiometricId] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
@@ -1088,7 +1218,13 @@ function EnrolModal({
 
   const enrol = useMutation({
     mutationFn: async () =>
-      (await api.post('/biometric/users', { member_id: memberId, device_id: Number(deviceId) })).data,
+      (
+        await api.post('/biometric/users', {
+          member_id: memberId,
+          device_id: Number(deviceId),
+          ...(biometricId.trim() ? { biometric_user_id: biometricId.trim() } : {}),
+        })
+      ).data,
     onSuccess: (data: { message: string }) => {
       setSuccess(data.message)
       setError(null)
@@ -1132,6 +1268,19 @@ function EnrolModal({
           </Select>
         </Field>
 
+        <Field
+          label="ID on the device"
+          hint="Leave blank to use the member's own ID. Fill it in only to claim a user the reader already has."
+        >
+          <Input
+            value={biometricId}
+            onChange={(e) => setBiometricId(e.target.value)}
+            placeholder={`${memberId} (default)`}
+            inputMode="numeric"
+            maxLength={20}
+          />
+        </Field>
+
         <div className="rounded-lg bg-ink-50 p-3 text-xs text-ink-600">
           <p className="font-medium text-ink-800">What happens next</p>
           <ol className="mt-1.5 list-decimal space-y-1 pl-4">
@@ -1141,6 +1290,9 @@ function EnrolModal({
           </ol>
           <p className="mt-2">
             The fingerprint never leaves the reader — only the ID mapping is stored here.
+          </p>
+          <p className="mt-2">
+            If that ID has already been scanning, those scans become this member&apos;s attendance, backdated.
           </p>
         </div>
       </div>

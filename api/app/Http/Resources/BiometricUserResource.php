@@ -29,6 +29,10 @@ class BiometricUserResource extends JsonResource
             'verified_at' => $this->verified_at?->toIso8601String(),
             'last_synced_at' => $this->last_synced_at?->toIso8601String(),
             'is_active' => $this->is_active,
+            // Whether the reader will currently admit them, as last pushed.
+            // Distinct from is_active, which is whether we still use this
+            // mapping at all.
+            'access_enabled' => $this->access_enabled,
 
             'member' => new MemberSummaryResource($this->whenLoaded('member')),
             'device' => new BiometricDeviceResource($this->whenLoaded('device')),
