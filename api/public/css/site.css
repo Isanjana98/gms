@@ -1,0 +1,1420 @@
+/*
+ * The public website.
+ *
+ * Dark, high-contrast and red-accented, built around the gym's own
+ * photographs — those pictures are almost black, so a white page would fight
+ * them and a light UI would make every image look like a hole in the layout.
+ *
+ * Hand-written and served as one cacheable file rather than through a build
+ * step or a CDN. This site is a handful of mostly-static pages; adding a
+ * bundler to the API application to produce ~20KB of CSS would cost more to
+ * maintain than the CSS does, and a play-CDN script is not something to put in
+ * front of paying customers.
+ *
+ * Motion is a progressive enhancement throughout. Everything is legible and
+ * usable with JavaScript off and with `prefers-reduced-motion` on; see the
+ * block at the end of this file.
+ */
+
+:root {
+  --bg: #08080a;
+  --bg-2: #0e0e11;
+  --surface: #141418;
+  --surface-2: #1b1b21;
+  --line: rgb(255 255 255 / 9%);
+  --line-strong: rgb(255 255 255 / 18%);
+
+  --text: #f4f4f6;
+  --muted: #9a9aa6;
+  --dim: #6b6b76;
+
+  --accent: #e11d2e;
+  --accent-hot: #ff3446;
+  --accent-glow: rgb(225 29 46 / 35%);
+
+  --wrap: 1200px;
+  --radius: 14px;
+
+  /* One easing for everything, so the whole site decelerates the same way. */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  --font-display: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--muted);
+  font-family: var(--font-body);
+  line-height: 1.65;
+  /* Long Sinhala and Tamil words have no break opportunities and would
+     otherwise push the page sideways on a phone. */
+  overflow-wrap: break-word;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  color: var(--text);
+  line-height: 1.05;
+  margin: 0 0 0.5em;
+  font-weight: 900;
+  letter-spacing: -0.025em;
+}
+
+h1 {
+  font-size: clamp(2.6rem, 7.5vw, 5.5rem);
+  text-transform: uppercase;
+}
+
+h2 {
+  font-size: clamp(1.9rem, 4vw, 3rem);
+  text-transform: uppercase;
+}
+
+h3 {
+  font-size: 1.1rem;
+  letter-spacing: -0.01em;
+}
+
+p {
+  margin: 0 0 1rem;
+}
+
+::selection {
+  background: var(--accent);
+  color: #fff;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-hot);
+  outline-offset: 3px;
+}
+
+.wrap {
+  width: 100%;
+  max-width: var(--wrap);
+  margin: 0 auto;
+  /* One place sets the side gutter, so no section can lose it. */
+  padding-inline: 22px;
+}
+
+.section {
+  padding-block: clamp(4rem, 9vw, 7.5rem);
+  position: relative;
+}
+
+.section--tint {
+  background: var(--bg-2);
+}
+
+.section--line {
+  border-top: 1px solid var(--line);
+}
+
+.section__head {
+  max-width: 660px;
+  margin-bottom: clamp(2.5rem, 4vw, 3.5rem);
+}
+
+.section__head p {
+  color: var(--muted);
+  font-size: 1.05rem;
+  margin: 0;
+}
+
+/* A small red rule above a heading — the one repeated ornament on the site. */
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent-hot);
+  margin-bottom: 1rem;
+}
+
+.eyebrow::before {
+  content: "";
+  width: 28px;
+  height: 2px;
+  background: var(--accent);
+}
+
+/* ---------------------------------------------------------------- header */
+
+.header {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 100;
+  transition: background-color 0.35s var(--ease), border-color 0.35s var(--ease),
+    backdrop-filter 0.35s var(--ease);
+  border-bottom: 1px solid transparent;
+}
+
+/* Set by JS once the page scrolls: transparent over the hero photograph,
+   solid over content, so the links stay readable against both. */
+.header.is-stuck {
+  background: rgb(8 8 10 / 88%);
+  backdrop-filter: blur(14px);
+  border-bottom-color: var(--line);
+}
+
+.header__inner {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-height: 76px;
+  position: relative;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.brand__mark {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: linear-gradient(135deg, var(--accent), #7a0d18);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 1rem;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 10%);
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  margin-left: auto;
+}
+
+.nav a {
+  position: relative;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.6rem 0.85rem;
+  transition: color 0.25s var(--ease);
+}
+
+.nav a:not(.btn)::after {
+  content: "";
+  position: absolute;
+  left: 0.85rem;
+  right: 0.85rem;
+  bottom: 0.35rem;
+  height: 2px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.3s var(--ease);
+}
+
+.nav a:hover {
+  color: var(--text);
+}
+
+.nav a:not(.btn):hover::after,
+.nav a[aria-current="page"]::after {
+  transform: scaleX(1);
+}
+
+.nav a[aria-current="page"] {
+  color: var(--text);
+}
+
+.nav__toggle {
+  display: none;
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 0.55rem;
+  cursor: pointer;
+  color: var(--text);
+}
+
+/* ----------------------------------------------------------------- button */
+
+.btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  padding: 0.95rem 1.7rem;
+  border-radius: 10px;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  cursor: pointer;
+  overflow: hidden;
+  isolation: isolate;
+  transition: transform 0.25s var(--ease), box-shadow 0.25s var(--ease),
+    background-color 0.25s var(--ease), color 0.25s var(--ease), border-color 0.25s var(--ease);
+  /* A tap target a thumb can actually hit. */
+  min-height: 48px;
+}
+
+/* A colour wash that sweeps across on hover, rather than an instant swap. */
+.btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--accent-hot);
+  transform: scaleX(0);
+  transform-origin: right;
+  transition: transform 0.4s var(--ease);
+  z-index: -1;
+}
+
+.btn:hover::before {
+  transform: scaleX(1);
+  transform-origin: left;
+}
+
+.btn:hover {
+  transform: translateY(-2px);
+}
+
+.btn--primary {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 10px 30px -12px var(--accent-glow);
+}
+
+.btn--primary:hover {
+  box-shadow: 0 16px 40px -12px var(--accent-glow);
+}
+
+.btn--ghost {
+  border-color: var(--line-strong);
+  color: var(--text);
+  background: rgb(255 255 255 / 3%);
+}
+
+.btn--ghost:hover {
+  color: #fff;
+  border-color: transparent;
+}
+
+.btn--block {
+  width: 100%;
+}
+
+/* ------------------------------------------------------------------- hero */
+
+.hero {
+  position: relative;
+  min-height: min(92vh, 900px);
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.hero__media {
+  position: absolute;
+  inset: 0;
+}
+
+.hero__media img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  /* A slow drift, so a still photograph does not sit completely dead behind
+     the headline. Paused entirely under reduced motion. */
+  animation: kenburns 24s ease-out infinite alternate;
+  transition: opacity 1.6s var(--ease);
+}
+
+.hero__media img.is-active {
+  opacity: 0.55;
+}
+
+/* No JS: the first frame is simply shown. */
+.no-js .hero__media img:first-child {
+  opacity: 0.55;
+}
+
+@keyframes kenburns {
+  from { transform: scale(1) translate3d(0, 0, 0); }
+  to { transform: scale(1.12) translate3d(-1.5%, -1.5%, 0); }
+}
+
+/* Two layers: a vertical wash so the headline always has something dark
+   beneath it, and a vignette so the edges do not glare. */
+.hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgb(8 8 10 / 72%) 0%, rgb(8 8 10 / 35%) 35%, rgb(8 8 10 / 96%) 100%),
+    radial-gradient(120% 80% at 50% 40%, transparent 40%, rgb(8 8 10 / 70%) 100%);
+  pointer-events: none;
+}
+
+.hero__inner {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  padding-block: clamp(8rem, 18vw, 11rem) clamp(2.5rem, 5vw, 4rem);
+}
+
+.hero h1 {
+  max-width: 15ch;
+  margin-bottom: 1.25rem;
+  text-shadow: 0 2px 40px rgb(0 0 0 / 60%);
+}
+
+/* The accent word in the headline. */
+.hero h1 em {
+  font-style: normal;
+  color: var(--accent-hot);
+}
+
+.hero__lead {
+  max-width: 54ch;
+  font-size: clamp(1.02rem, 1.6vw, 1.2rem);
+  color: rgb(255 255 255 / 78%);
+  margin-bottom: 2.25rem;
+}
+
+.hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+}
+
+/* A strip of figures sitting on the bottom edge of the photograph. */
+.hero__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 1px;
+  margin-top: clamp(3rem, 6vw, 4.5rem);
+  background: var(--line);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.stat {
+  background: rgb(8 8 10 / 55%);
+  backdrop-filter: blur(6px);
+  padding: 1.35rem 1.25rem;
+}
+
+.stat__value {
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: clamp(1.9rem, 3.4vw, 2.7rem);
+  line-height: 1;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat__label {
+  display: block;
+  margin-top: 0.4rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.hero--compact {
+  min-height: 0;
+  align-items: center;
+}
+
+.hero--compact .hero__inner {
+  padding-block: clamp(7.5rem, 14vw, 9.5rem) clamp(3rem, 6vw, 4.5rem);
+}
+
+.hero--compact h1 {
+  font-size: clamp(2.2rem, 5.5vw, 3.8rem);
+  max-width: 20ch;
+}
+
+.hero--compact .hero__lead {
+  margin-bottom: 0;
+}
+
+/* ---------------------------------------------------------------- marquee */
+
+.marquee {
+  overflow: hidden;
+  border-block: 1px solid var(--line);
+  background: var(--accent);
+  padding-block: 0.85rem;
+  user-select: none;
+}
+
+.marquee__track {
+  display: flex;
+  width: max-content;
+  animation: slide 32s linear infinite;
+}
+
+.marquee:hover .marquee__track {
+  animation-play-state: paused;
+}
+
+.marquee span {
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 0.95rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #fff;
+  padding-inline: 1.6rem;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 1.6rem;
+}
+
+.marquee span::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 55%);
+}
+
+@keyframes slide {
+  /* The track holds the list twice, so moving exactly half of it loops
+     seamlessly. */
+  to { transform: translate3d(-50%, 0, 0); }
+}
+
+/* ------------------------------------------------------------------ cards */
+
+.grid {
+  display: grid;
+  gap: 1.25rem;
+}
+
+/*
+ * Explicit column counts rather than auto-fit.
+ *
+ * auto-fit decides for itself how many tracks fit, which put six facility
+ * cards into a row of four and a row of two — tidy by the algorithm's
+ * reckoning and obviously wrong to look at. The number of columns is a design
+ * decision, so it is stated.
+ */
+.grid--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.grid--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+@media (max-width: 1000px) {
+  .grid--3,
+  .grid--4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 640px) {
+  .grid--2,
+  .grid--3,
+  .grid--4 { grid-template-columns: minmax(0, 1fr); }
+}
+
+.card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.75rem;
+  overflow: hidden;
+  transition: transform 0.35s var(--ease), border-color 0.35s var(--ease),
+    background-color 0.35s var(--ease);
+}
+
+/* A red edge that wipes in along the top on hover. */
+.card::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.4s var(--ease);
+}
+
+.card:hover {
+  transform: translateY(-4px);
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+
+.card:hover::after {
+  transform: scaleX(1);
+}
+
+.card h3 {
+  margin-bottom: 0.4rem;
+}
+
+.card p {
+  margin-bottom: 0;
+  font-size: 0.95rem;
+}
+
+.card--flush {
+  padding: 0;
+}
+
+.card__body {
+  padding: 1.35rem 1.5rem 1.6rem;
+}
+
+.card__index {
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: var(--accent);
+  display: block;
+  margin-bottom: 0.9rem;
+}
+
+/* ------------------------------------------------------------------ price */
+
+.price {
+  display: flex;
+  flex-direction: column;
+}
+
+.price--featured {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, rgb(225 29 46 / 8%), transparent 45%), var(--surface);
+}
+
+.price--featured::after {
+  transform: scaleX(1);
+}
+
+.price__tag {
+  position: absolute;
+  top: 1.25rem;
+  right: 1.25rem;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+}
+
+.price__amount {
+  font-family: var(--font-display);
+  font-size: clamp(2.2rem, 4vw, 2.9rem);
+  font-weight: 900;
+  color: var(--text);
+  letter-spacing: -0.03em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.price__currency {
+  font-size: 0.9rem;
+  color: var(--dim);
+  letter-spacing: 0.1em;
+  display: block;
+  margin-bottom: 0.3rem;
+}
+
+.price__period {
+  color: var(--dim);
+  font-size: 0.9rem;
+}
+
+.price ul {
+  list-style: none;
+  padding: 0;
+  margin: 1.5rem 0;
+  flex: 1;
+}
+
+.price li {
+  position: relative;
+  padding-left: 1.75rem;
+  margin-bottom: 0.65rem;
+  font-size: 0.93rem;
+}
+
+.price li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.42em;
+  width: 13px;
+  height: 7px;
+  border-left: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent);
+  transform: rotate(-45deg);
+}
+
+/* ---------------------------------------------------------------- people */
+
+.person {
+  position: relative;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  transition: transform 0.35s var(--ease), border-color 0.35s var(--ease);
+}
+
+.person:hover {
+  transform: translateY(-4px);
+  border-color: var(--line-strong);
+}
+
+.person__photo {
+  width: 100%;
+  /* Square, not portrait. These are initials on a gradient, not photographs;
+     a 3:4 tile left a large empty panel above each name. */
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(90% 70% at 50% 15%, rgb(225 29 46 / 18%), transparent 70%),
+    linear-gradient(160deg, #17171c, #0c0c0f);
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: clamp(2.2rem, 4vw, 3rem);
+  color: rgb(255 255 255 / 22%);
+  letter-spacing: 0.05em;
+  transition: color 0.35s var(--ease);
+}
+
+.person:hover .person__photo {
+  color: rgb(255 255 255 / 40%);
+}
+
+.person__body {
+  padding: 1.2rem 1.35rem 1.5rem;
+}
+
+.person__role {
+  color: var(--accent-hot);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin: 0.25rem 0 0;
+}
+
+/* ----------------------------------------------------------- testimonials */
+
+.quote {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.75rem;
+  position: relative;
+  transition: transform 0.35s var(--ease), border-color 0.35s var(--ease);
+}
+
+.quote:hover {
+  transform: translateY(-4px);
+  border-color: var(--line-strong);
+}
+
+.quote::before {
+  content: "\201C";
+  position: absolute;
+  top: 0.35rem;
+  right: 1.25rem;
+  font-family: var(--font-display);
+  font-size: 5rem;
+  line-height: 1;
+  color: rgb(225 29 46 / 22%);
+}
+
+.quote blockquote {
+  margin: 0 0 1.25rem;
+  font-size: 1.02rem;
+  color: var(--text);
+  position: relative;
+}
+
+.quote__who {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.quote__who img,
+.quote__initials {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.quote__initials {
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-weight: 800;
+  font-size: 0.85rem;
+}
+
+.quote__name {
+  display: block;
+  color: var(--text);
+  font-weight: 700;
+  font-size: 0.93rem;
+}
+
+.quote__role {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--dim);
+}
+
+.stars {
+  color: var(--accent-hot);
+  letter-spacing: 3px;
+  font-size: 0.85rem;
+  margin-bottom: 0.75rem;
+}
+
+/* -------------------------------------------------------------- timetable */
+
+.day + .day {
+  margin-top: 2.5rem;
+}
+
+.day h3 {
+  font-size: 1.35rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding-bottom: 0.65rem;
+  border-bottom: 2px solid var(--accent);
+  margin-bottom: 0.25rem;
+  display: inline-block;
+}
+
+.slot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 1.25rem;
+  padding: 1rem 0.25rem;
+  border-bottom: 1px solid var(--line);
+  transition: background-color 0.25s var(--ease), padding-left 0.25s var(--ease);
+}
+
+.slot:hover {
+  background: rgb(255 255 255 / 3%);
+  padding-left: 0.85rem;
+}
+
+.slot__time {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-display);
+  font-weight: 800;
+  color: var(--accent-hot);
+  min-width: 165px;
+  letter-spacing: 0.02em;
+}
+
+.slot__name {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.slot__meta {
+  color: var(--dim);
+  font-size: 0.9rem;
+  margin-left: auto;
+}
+
+/* ---------------------------------------------------------------- gallery */
+
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0.85rem;
+}
+
+.gallery button {
+  display: block;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface);
+  cursor: zoom-in;
+  position: relative;
+  width: 100%;
+  transition: border-color 0.35s var(--ease), transform 0.35s var(--ease);
+}
+
+.gallery img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  transition: transform 0.6s var(--ease), opacity 0.35s var(--ease);
+  opacity: 0.85;
+}
+
+.gallery button:hover {
+  border-color: var(--accent);
+  transform: translateY(-3px);
+}
+
+.gallery button:hover img {
+  transform: scale(1.06);
+  opacity: 1;
+}
+
+/* Every third tile spans two rows, so the grid is not a flat chequerboard. */
+.gallery button:nth-child(7n + 1) {
+  grid-row: span 2;
+}
+
+.gallery button:nth-child(7n + 1) img {
+  aspect-ratio: 4 / 6.2;
+}
+
+/* -------------------------------------------------------------- lightbox */
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 4vmin;
+  background: rgb(4 4 6 / 92%);
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.3s var(--ease), visibility 0.3s var(--ease);
+}
+
+.lightbox.is-open {
+  opacity: 1;
+  visibility: visible;
+}
+
+.lightbox img {
+  max-width: 100%;
+  max-height: 82vh;
+  border-radius: 10px;
+  transform: scale(0.96);
+  transition: transform 0.35s var(--ease);
+  box-shadow: 0 30px 80px -20px #000;
+}
+
+.lightbox.is-open img {
+  transform: scale(1);
+}
+
+.lightbox figcaption {
+  margin-top: 1rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.lightbox__close {
+  position: absolute;
+  top: 1.25rem;
+  right: 1.25rem;
+  width: 46px;
+  height: 46px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: rgb(255 255 255 / 6%);
+  color: var(--text);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.25s var(--ease);
+}
+
+.lightbox__close:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ------------------------------------------------------------------- blog */
+
+.post__meta {
+  color: var(--dim);
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.post__cover {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  background: var(--surface-2);
+  transition: transform 0.6s var(--ease);
+}
+
+.card--flush:hover .post__cover {
+  transform: scale(1.04);
+}
+
+.card--flush .post__cover {
+  /* Kept inside the rounded corner while it scales. */
+  border-radius: 0;
+}
+
+.post__media {
+  overflow: hidden;
+}
+
+.prose {
+  max-width: 68ch;
+  font-size: 1.05rem;
+  color: var(--muted);
+}
+
+.prose p {
+  margin-bottom: 1.35rem;
+}
+
+.prose strong {
+  color: var(--text);
+}
+
+/* ------------------------------------------------------------------ forms */
+
+.field {
+  margin-bottom: 1.1rem;
+}
+
+.field label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.45rem;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-2);
+  min-height: 48px;
+  transition: border-color 0.25s var(--ease), background-color 0.25s var(--ease);
+}
+
+.field textarea {
+  min-height: 130px;
+  resize: vertical;
+}
+
+.field input::placeholder,
+.field textarea::placeholder {
+  color: var(--dim);
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.field__error {
+  color: var(--accent-hot);
+  font-size: 0.82rem;
+  margin-top: 0.35rem;
+}
+
+/* The honeypot. Off-screen rather than display:none, because some bots skip
+   fields that are explicitly hidden. */
+.hp {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.notice {
+  padding: 1rem 1.25rem;
+  border-radius: 10px;
+  margin-bottom: 1.5rem;
+  border: 1px solid;
+  font-size: 0.95rem;
+}
+
+.notice--ok {
+  background: rgb(16 185 129 / 10%);
+  border-color: rgb(16 185 129 / 35%);
+  color: #6ee7b7;
+}
+
+.notice--error {
+  background: rgb(225 29 46 / 10%);
+  border-color: rgb(225 29 46 / 35%);
+  color: #fca5a5;
+}
+
+/* ------------------------------------------------------------------- misc */
+
+.facts {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.facts li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.93rem;
+}
+
+.facts li:last-child {
+  border-bottom: 0;
+}
+
+.facts span:first-child {
+  color: var(--dim);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  padding-top: 0.15rem;
+}
+
+.map {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  filter: grayscale(1) invert(0.92) contrast(0.85);
+  transition: filter 0.4s var(--ease);
+}
+
+.map:hover {
+  filter: none;
+}
+
+.cta {
+  position: relative;
+  border-radius: 18px;
+  padding: clamp(2.5rem, 6vw, 4.5rem);
+  text-align: center;
+  overflow: hidden;
+  background:
+    radial-gradient(90% 120% at 50% 0%, rgb(225 29 46 / 30%), transparent 65%),
+    linear-gradient(180deg, #17171c, #0c0c0f);
+  border: 1px solid var(--line-strong);
+}
+
+.cta h2 {
+  margin-bottom: 0.75rem;
+}
+
+.cta p {
+  color: var(--muted);
+  max-width: 48ch;
+  margin-inline: auto;
+  margin-bottom: 2rem;
+}
+
+.cta__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  justify-content: center;
+}
+
+/* ----------------------------------------------------------------- footer */
+
+.footer {
+  background: var(--bg-2);
+  border-top: 1px solid var(--line);
+  padding-block: clamp(3rem, 6vw, 4.5rem) 2rem;
+}
+
+.footer h4 {
+  color: var(--text);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  margin: 0 0 1.1rem;
+}
+
+.footer a {
+  color: var(--muted);
+  transition: color 0.25s var(--ease);
+}
+
+.footer a:hover {
+  color: var(--accent-hot);
+}
+
+.footer__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 2.5rem;
+}
+
+.footer__links {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.footer__links li {
+  margin-bottom: 0.6rem;
+  font-size: 0.93rem;
+}
+
+.footer__bottom {
+  margin-top: 3rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  color: var(--dim);
+}
+
+.social {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 1.25rem;
+}
+
+.social a {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 0.85rem;
+  transition: background-color 0.25s var(--ease), border-color 0.25s var(--ease),
+    transform 0.25s var(--ease);
+}
+
+.social a:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  transform: translateY(-2px);
+}
+
+/* --------------------------------------------------------------- reveals */
+
+/*
+ * Scroll reveals, applied only when JavaScript is running.
+ *
+ * The hidden state is scoped to `.js`, which an inline script in <head> sets
+ * before first paint. Without that guard a script failure would leave the
+ * whole page invisible — the single worst way for a progressive enhancement
+ * to fail.
+ */
+.js [data-reveal] {
+  opacity: 0;
+  transform: translate3d(0, 22px, 0);
+  transition: opacity 0.7s var(--ease), transform 0.7s var(--ease);
+  transition-delay: calc(var(--i, 0) * 80ms);
+  will-change: opacity, transform;
+}
+
+.js [data-reveal].is-in {
+  opacity: 1;
+  transform: none;
+}
+
+.js [data-reveal="left"] { transform: translate3d(-24px, 0, 0); }
+.js [data-reveal="scale"] { transform: scale(0.94); }
+
+/* ------------------------------------------------------------------ phone */
+
+@media (max-width: 900px) {
+  .nav {
+    display: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    right: 0;
+    background: rgb(14 14 17 / 98%);
+    backdrop-filter: blur(16px);
+    flex-direction: column;
+    align-items: stretch;
+    padding: 0.6rem;
+    gap: 0.15rem;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: 0 24px 60px -20px #000;
+  }
+
+  .nav a,
+  .nav .btn {
+    width: 100%;
+    justify-content: flex-start;
+    padding: 0.85rem 1rem;
+  }
+
+  .nav a:not(.btn)::after {
+    display: none;
+  }
+
+  /* Driven by the checkbox in the header, so the menu needs no JavaScript. */
+  .nav__state:checked ~ .nav {
+    display: flex;
+  }
+
+  .nav__toggle {
+    display: grid;
+    place-items: center;
+  }
+
+  .header__inner {
+    min-height: 66px;
+  }
+
+  .slot__meta {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .slot__time {
+    min-width: 135px;
+  }
+
+  .gallery button:nth-child(7n + 1) {
+    grid-row: auto;
+  }
+
+  .gallery button:nth-child(7n + 1) img {
+    aspect-ratio: 4 / 3;
+  }
+}
+
+@media print {
+  .header,
+  .footer,
+  .cta,
+  .marquee,
+  .lightbox {
+    display: none;
+  }
+}
+
+/* --------------------------------------------------------- reduced motion */
+
+/*
+ * Everything above degrades to an instant state change.
+ *
+ * Not "less motion" — none of the decorative kind. Vestibular disorders are
+ * triggered by exactly the drifting, zooming and parallax that makes the rest
+ * of this file worth having, and a marquee that cannot be stopped is the worst
+ * offender on the page.
+ */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .hero__media img {
+    animation: none;
+  }
+
+  .marquee__track {
+    animation: none;
+    /* Without the animation the doubled list would simply overflow; showing
+       the first half static keeps the band readable. */
+    transform: none;
+  }
+
+  .js [data-reveal] {
+    opacity: 1;
+    transform: none;
+  }
+}

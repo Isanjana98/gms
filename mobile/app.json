@@ -1,0 +1,39 @@
+{
+    "expo":  {
+                 "name":  "Gym Manager",
+                 "slug":  "gym-manager-member",
+                 "scheme":  "gymmanager",
+                 "version":  "1.0.0",
+                 "orientation":  "portrait",
+                 "icon":  "./assets/icon.png",
+                 "userInterfaceStyle":  "dark",
+                 "backgroundColor":  "#08080A",
+                 "newArchEnabled":  true,
+                 "ios":  {
+                             "supportsTablet":  true,
+                             "bundleIdentifier":  "lk.gymmanager.member"
+                         },
+                 "android":  {
+                                 "package":  "lk.gymmanager.member",
+                                 "adaptiveIcon":  {
+                                                      "backgroundColor":  "#08080A",
+                                                      "foregroundImage":  "./assets/android-icon-foreground.png",
+                                                      "monochromeImage":  "./assets/android-icon-monochrome.png"
+                                                  },
+                                 "predictiveBackGestureEnabled":  false
+                             },
+                 "web":  {
+                             "favicon":  "./assets/favicon.png",
+                             "bundler":  "metro",
+                             "output":  "single"
+                         },
+                 "plugins":  [
+                                 "expo-router",
+                                 "expo-secure-store",
+                                 "expo-sharing"
+                             ],
+                 "extra":  {
+                               "apiUrl":  "http://localhost:8000/api"
+                           }
+             }
+}

@@ -1,0 +1,92 @@
+@import 'tailwindcss';
+
+/*
+ * One palette, defined once.
+ *
+ * The interface runs all day on a reception desk under fluorescent light, so
+ * it leans on high contrast and generous hit targets rather than subtle
+ * greys: staff read it at a glance while a member waits at the counter.
+ */
+@theme {
+  --color-brand-50: #eef6ff;
+  --color-brand-100: #d9ebff;
+  --color-brand-200: #bcdcff;
+  --color-brand-300: #8ec6ff;
+  --color-brand-400: #59a5ff;
+  --color-brand-500: #3182f6;
+  --color-brand-600: #1d63dd;
+  --color-brand-700: #1a4fb4;
+  --color-brand-800: #1b4394;
+  --color-brand-900: #1c3b75;
+
+  --color-ink-50: #f7f8fa;
+  --color-ink-100: #eef0f4;
+  --color-ink-200: #dde1e9;
+  --color-ink-300: #c2c9d6;
+  --color-ink-400: #9aa4b8;
+  --color-ink-500: #74809a;
+  --color-ink-600: #5a6480;
+  --color-ink-700: #474f68;
+  --color-ink-800: #333a4d;
+  --color-ink-900: #1f2433;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-ink-100 text-ink-900 antialiased;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* Numbers in tables must line up; money that jitters column to column is
+   harder to scan and easier to misread. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Touch targets.
+ *
+ * The compact controls that suit a mouse are about 28px tall, which is well
+ * under what a finger can hit reliably — reception using a phone on the gym
+ * floor would miss "Refund" and hit "Receipt". Applied only where the pointer
+ * is coarse, so the desktop layout keeps its density.
+ */
+@media (pointer: coarse) {
+  button,
+  [role='button'],
+  select,
+  input:not([type='checkbox']):not([type='radio']):not([type='file']) {
+    min-height: 40px;
+  }
+
+  input[type='checkbox'],
+  input[type='radio'] {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+}
+
+/*
+ * Long unbreakable values — an email address, a URL — must wrap rather than
+ * widen their column.
+ *
+ * A grid or flex child will not shrink below the intrinsic width of its
+ * content, so one long address in a narrow column silently widens the whole
+ * page. Deliberately not solved with `overflow-x: hidden` on the body: that
+ * hides the symptom, clips whatever caused it, and would stop the mobile
+ * audit from ever catching it again.
+ */
+.wrap-anywhere {
+  overflow-wrap: anywhere;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}
