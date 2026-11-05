@@ -1,0 +1,30 @@
+# Repository root.
+#
+# `api/` and `web/` carry their own .gitignore for vendor, node_modules and
+# their .env files. This one covers what lives beside them, and the reason it
+# exists is that nothing here was ignored at all - a `git add -A` was one
+# keystroke away from publishing a production APP_KEY.
+
+# ---------------------------------------------------------------- secrets
+#
+# deploy/.env.production holds the live APP_KEY, the database password and the
+# fingerprint reader's push token. A repository is the wrong place for any of
+# them: it is copied to every clone and every fork, and a key is still a key
+# after it has been deleted from the tip of the branch.
+#
+# Keep the file on your own machine and upload it to the host by hand.
+/deploy/
+.env
+.env.*
+!.env.example
+
+# ------------------------------------------------------------- build output
+#
+# Release archives are 13 MB each and are rebuilt from source by
+# build-release.ps1, so a repository full of them is cost without benefit.
+*.zip
+
+# ---------------------------------------------------------------- local junk
+debug.log
+.DS_Store
+Thumbs.db

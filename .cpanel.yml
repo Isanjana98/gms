@@ -1,0 +1,50 @@
+# cPanel Git(tm) Version Control - deployment tasks.
+#
+# Run by "Manage > Pull or Deploy > Deploy HEAD Commit" after cPanel has
+# cloned or pulled this repository into ~/repositories/gms.
+#
+# This repository is a monorepo: the Laravel application is in `api/`, the
+# admin panel's source is in `web/`. Only `api/` is deployed - `web/` is a
+# build input, and its compiled output is committed at `api/public/admin`.
+#
+# ---------------------------------------------------------------------------
+# EDIT THESE BEFORE THE FIRST DEPLOY
+#
+#   DEPLOYPATH   your account's home plus the folder you want the app in
+#   PHP          the binary for the version you set in MultiPHP Manager;
+#                `which php` in Terminal, or look under /opt/cpanel/
+#   COMPOSER     `which composer`, or download composer.phar into the home
+#                directory and use `$PHP ~/composer.phar`
+#
+# A wrong PHP path is the quiet failure here: the deploy appears to work and
+# the application runs on whatever version is first on PATH, which on cPanel
+# is often an old one.
+# ---------------------------------------------------------------------------
+---
+deployment:
+  tasks:
+    - export DEPLOYPATH=/home/villaimp/gms
+    - export PHP=/usr/local/bin/php
+    - export COMPOSER=/usr/local/bin/composer
+
+    - /bin/mkdir -p $DEPLOYPATH
+
+    # Copy the application across. `.env` is not in this repository and so is
+    # never touched - it stays exactly as you uploaded it. The same is true of
+    # storage/, which holds member photographs and signed health screenings:
+    # only the .gitignore placeholders are tracked, so nothing of theirs is
+    # overwritten.
+    - /bin/cp -R api/. $DEPLOYPATH/
+
+    - cd $DEPLOYPATH && $COMPOSER install --no-dev --optimize-autoloader --no-interaction
+
+    # Compiled config and routes pin the previous deploy's values, so a stale
+    # cache survives a deploy and quietly serves the old settings.
+    - cd $DEPLOYPATH && $PHP artisan config:clear
+    - cd $DEPLOYPATH && $PHP artisan route:clear
+    - cd $DEPLOYPATH && $PHP artisan view:clear
+
+    - cd $DEPLOYPATH && $PHP artisan migrate --force
+
+    # Idempotent: does nothing when the link is already there.
+    - cd $DEPLOYPATH && $PHP artisan storage:link
