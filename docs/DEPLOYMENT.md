@@ -317,6 +317,98 @@ happened, and the fix is `php artisan storage:link`, or creating the link
 Until then member photographs and the logo return 404 while everything else
 works.
 
+### On cPanel, step by step
+
+cPanel is the common case and it has two traps: the document root, and the
+database user's privileges. Both are dealt with below.
+
+**1. Create the database first.** cPanel's MySQL users are not allowed to
+create databases, so the installer cannot do it for you — it will say so
+rather than failing obscurely. In **MySQL® Databases**:
+
+- Create a database, e.g. `gms`.
+- Create a user with a strong password.
+- **Add the user to the database with ALL PRIVILEGES.** Skipping this is the
+  single most common cause of "connected, but the schema would not build".
+
+cPanel prefixes both names with your account, so note down what it actually
+created: `myaccount_gms` and `myaccount_gmsuser`, not `gms` and `gmsuser`.
+The host is `localhost`, port `3306`.
+
+**2. Set the PHP version.** In **MultiPHP Manager**, set the domain to PHP
+**8.2 or newer**. In **Select PHP Version → Extensions**, make sure these are
+ticked: `pdo_mysql`, `mbstring`, `openssl`, `fileinfo`, `gd`, `zip`, `curl`,
+`intl`, `bcmath`. The installer checks every one of them and names any that
+are missing, so you can come back to this list.
+
+**3. Upload and extract.** In **File Manager**, upload the zip and use
+**Extract**. Where it goes depends on which of the two layouts below you use.
+
+**4. Deal with the document root.** Laravel must be served from its `public/`
+directory. Everything above `public/` — `.env` with your database password,
+`storage/` with member photographs and signed forms — has to stay out of
+reach of a browser. Two ways:
+
+#### Layout A — point the document root at `public/` (preferred)
+
+Extract to `/home/youraccount/gms`, then in **Domains**, open the domain and
+set its document root to `gms/public`.
+
+Nothing else to change. This is the better layout because the application
+files are not under `public_html` at all.
+
+cPanel will not always let you edit the document root of the *primary*
+domain. Addon and subdomains can always be set this way, so one option is to
+serve the system from a subdomain, e.g. `app.projectkaya.lk`.
+
+#### Layout B — split it, when the document root is fixed
+
+Extract to `/home/youraccount/gms`, then:
+
+- Move everything **inside** `gms/public/` into `public_html/` — including the
+  `admin/` folder, `.htaccess`, `index.php` and `favicon.ico`.
+- Delete the now-empty `gms/public`.
+- Edit `public_html/index.php` and point its three paths one level further
+  across, from `/../` to `/../gms/`:
+
+```php
+if (file_exists($maintenance = __DIR__.'/../gms/storage/framework/maintenance.php')) {
+require __DIR__.'/../gms/vendor/autoload.php';
+$app = require_once __DIR__.'/../gms/bootstrap/app.php';
+```
+
+Make sure `public_html/.htaccess` came across. Without it every URL except the
+front page returns 404, because nothing is rewriting them to `index.php`.
+
+**5. Run the installer.** Open `https://yourdomain/install` and fill in the
+database name, user and password cPanel gave you — the prefixed ones. If the
+page says a requirement is missing, fix it and reload; nothing is written
+until every check passes.
+
+**6. Add the cron job.** In **Cron Jobs**, add the line the installer printed,
+once per minute:
+
+```
+* * * * * cd /home/youraccount/gms && /usr/local/bin/php artisan schedule:run >/dev/null 2>&1
+```
+
+Without it nothing expires, no reminders go out and no backups are taken.
+Check the PHP path in **Select PHP Version** if `/usr/local/bin/php` is not
+right for your account — using the wrong one silently runs a different PHP
+version.
+
+**7. Force HTTPS.** Sessions are cookie-based and the cookie is marked secure
+in production. In cPanel, **Domains → Force HTTPS Redirect** on, and make sure
+an SSL certificate is issued (AutoSSL does this for free).
+
+**What will not work on cPanel.** Anything that needs the server to open a
+connection *to* your fingerprint reader — door control, automatic lockout on
+expiry, pull sync, reading users. A reader on the gym's LAN can post events
+out to the site, but the site cannot call back in. See
+[BIOMETRIC-SETUP.md](BIOMETRIC-SETUP.md).
+
+---
+
 > **Install immediately after extracting.** Between upload and setup there is a
 > window in which anyone who finds the URL can install it themselves and own
 > the system. That window is the reason to close it in minutes rather than
