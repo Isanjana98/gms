@@ -470,11 +470,51 @@ class HikvisionDriver implements DeviceDriver
             ->withOptions([
                 // ISAPI is digest, not basic. Guzzle handles the challenge.
                 'auth' => [$this->device->username, $this->device->password, 'digest'],
-                // Cameras and terminals ship self-signed certificates, so a
-                // strict check would fail every HTTPS device on a private LAN.
-                'verify' => false,
+                'verify' => $this->shouldVerifyTls(),
             ])
             ->acceptJson();
+    }
+
+    /**
+     * Whether to check the reader's TLS certificate.
+     *
+     * Access terminals ship self-signed certificates, so verifying one on the
+     * gym LAN would fail every HTTPS device there and help nobody: an attacker
+     * able to intercept that traffic is already inside the building's network.
+     *
+     * Reaching the reader through a tunnel is a different situation entirely.
+     * The address is then a public hostname, the traffic crosses the internet,
+     * and every request carries the device's administrator credentials in a
+     * digest exchange. Skipping the certificate check there would let anyone
+     * positioned on the path present their own certificate and collect them.
+     *
+     * The test is the address itself rather than a setting, so that nobody has
+     * to remember to change a checkbox when they move a device behind a
+     * tunnel — which is exactly the moment the check starts mattering.
+     */
+    private function shouldVerifyTls(): bool
+    {
+        $host = parse_url($this->device->base_url, PHP_URL_HOST);
+
+        if (! is_string($host) || $host === '') {
+            return true;
+        }
+
+        // A literal private or reserved address is a LAN device: 192.168.x.x,
+        // 10.x.x.x, 172.16-31.x.x, 127.x.x.x and the IPv6 equivalents.
+        $isPublicIp = filter_var(
+            $host,
+            FILTER_VALIDATE_IP,
+            FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE,
+        ) !== false;
+
+        if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
+            return $isPublicIp;
+        }
+
+        // A hostname. `.local` and a bare name with no dot are LAN naming;
+        // anything else resolves on the public internet and is verified.
+        return ! (str_ends_with($host, '.local') || ! str_contains($host, '.'));
     }
 
     /**
