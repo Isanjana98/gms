@@ -33,6 +33,7 @@ import type {
   Attendance,
   BiometricDevice,
   BiometricUser,
+  Invoice,
   Member,
   Membership,
   MembershipPlan,
@@ -40,7 +41,15 @@ import type {
   Payment,
 } from '../lib/types'
 
-type Tab = 'memberships' | 'payments' | 'attendance' | 'schedule' | 'health' | 'documents' | 'fingerprint'
+type Tab =
+  | 'memberships'
+  | 'invoices'
+  | 'payments'
+  | 'attendance'
+  | 'schedule'
+  | 'health'
+  | 'documents'
+  | 'fingerprint'
 
 export function MemberDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -50,6 +59,7 @@ export function MemberDetailPage() {
 
   const [tab, setTab] = useState<Tab>('memberships')
   const [renewing, setRenewing] = useState<Membership | null>(null)
+  const [selling, setSelling] = useState(false)
   const [paying, setPaying] = useState<Membership | null>(null)
   const [enrolling, setEnrolling] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -63,6 +73,7 @@ export function MemberDetailPage() {
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ['member', id] })
     queryClient.invalidateQueries({ queryKey: ['member-payments', id] })
+    queryClient.invalidateQueries({ queryKey: ['member-invoices', id] })
     queryClient.invalidateQueries({ queryKey: ['member-attendance', id] })
     queryClient.invalidateQueries({ queryKey: ['member-schedule', Number(id)] })
   }
@@ -76,6 +87,7 @@ export function MemberDetailPage() {
   const current = member.current_membership
   const tabs: Array<{ key: Tab; label: string; show: boolean }> = [
     { key: 'memberships', label: 'Memberships', show: can(P.membershipsView) },
+    { key: 'invoices', label: 'Invoices', show: can(P.invoicesView) },
     { key: 'payments', label: 'Payments', show: can(P.paymentsView) },
     { key: 'attendance', label: 'Attendance', show: can(P.attendanceView) },
     { key: 'schedule', label: 'Gym schedule', show: can(P.workoutsView) },
@@ -111,6 +123,14 @@ export function MemberDetailPage() {
             {can(P.membershipsRenew) && current && (
               <Button size="sm" onClick={() => setRenewing(current)}>
                 Renew membership
+              </Button>
+            )}
+            {/* Renewing continues an existing term; a member who has none, or
+                whose last one was cancelled, needs a new one sold instead.
+                Both actions never apply at once, so only one ever shows. */}
+            {can(P.membershipsCreate) && !current && (
+              <Button size="sm" onClick={() => setSelling(true)}>
+                Sell membership
               </Button>
             )}
           </>
@@ -210,6 +230,11 @@ export function MemberDetailPage() {
               <EmptyState
                 title="No membership on record"
                 description="Sell a membership so this member can be admitted."
+                action={
+                  can(P.membershipsCreate) ? (
+                    <Button onClick={() => setSelling(true)}>Sell membership</Button>
+                  ) : undefined
+                }
               />
             )}
           </Card>
@@ -239,6 +264,7 @@ export function MemberDetailPage() {
             {tab === 'memberships' && (
               <MembershipsTab member={member} onRenew={setRenewing} onPay={setPaying} />
             )}
+            {tab === 'invoices' && <InvoicesTab memberId={member.id} />}
             {tab === 'payments' && <PaymentsTab memberId={member.id} />}
             {tab === 'attendance' && <AttendanceTab memberId={member.id} />}
             {tab === 'schedule' && <ScheduleTab memberId={member.id} />}
@@ -260,6 +286,18 @@ export function MemberDetailPage() {
           onDone={(message) => {
             setRenewing(null)
             toast.success('Membership renewed', message)
+            refresh()
+          }}
+        />
+      )}
+
+      {selling && (
+        <SellMembershipModal
+          memberId={member.id}
+          onClose={() => setSelling(false)}
+          onDone={(message) => {
+            setSelling(false)
+            toast.success('Membership created', message)
             refresh()
           }}
         />
@@ -411,6 +449,82 @@ function MembershipsTab({
                   </Button>
                 )}
               </div>
+            </Td>
+          </tr>
+        ))}
+      </tbody>
+    </Table>
+  )
+}
+
+/**
+ * Every invoice raised for this member, each downloadable as a PDF.
+ *
+ * The documents already existed - `GET /invoices/{id}/pdf` has been there all
+ * along - but nothing in the panel linked to them, so reception could only
+ * reach an invoice through the outstanding-balance report, and then only while
+ * it was still unpaid. A settled invoice had no route to it at all.
+ */
+function InvoicesTab({ memberId }: { memberId: number }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['member-invoices', String(memberId)],
+    queryFn: async () =>
+      (await api.get<Paginated<Invoice>>('/invoices', { params: { member_id: memberId, per_page: 100 } })).data,
+  })
+
+  if (isLoading) return <LoadingBlock />
+  if (error) return <Alert>{errorMessage(error)}</Alert>
+  if (!data?.data?.length) {
+    return (
+      <EmptyState
+        title="No invoices yet"
+        description="An invoice is raised when a membership is sold or renewed."
+      />
+    )
+  }
+
+  return (
+    <Table>
+      <thead>
+        <tr>
+          <Th>Invoice</Th>
+          <Th>Issued</Th>
+          <Th>Due</Th>
+          <Th align="right">Total</Th>
+          <Th align="right">Paid</Th>
+          <Th align="right">Balance</Th>
+          <Th align="right">Status</Th>
+          <Th />
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-ink-100">
+        {data.data.map((invoice) => (
+          <tr key={invoice.id}>
+            <Td>
+              <span className="font-medium">{invoice.invoice_number}</span>
+            </Td>
+            <Td>{date(invoice.issue_date)}</Td>
+            <Td>{invoice.due_date ? date(invoice.due_date) : '—'}</Td>
+            <Td align="right">{money(invoice.total)}</Td>
+            <Td align="right">{money(invoice.paid_amount)}</Td>
+            <Td align="right">
+              <span className={invoice.balance > 0 ? 'font-medium text-red-600' : 'text-ink-500'}>
+                {money(invoice.balance)}
+              </span>
+            </Td>
+            <Td align="right">
+              <StatusBadge status={invoice.status} />
+            </Td>
+            <Td align="right">
+              {/* FileButton, not a link: the PDF needs the session header, and
+                  a plain href drops it and lands reception on a 401 page. */}
+              <FileButton
+                url={`/invoices/${invoice.id}/pdf`}
+                filename={`invoice-${invoice.invoice_number}.pdf`}
+                variant="ghost"
+              >
+                PDF
+              </FileButton>
             </Td>
           </tr>
         ))}
@@ -811,6 +925,134 @@ function ChangeBiometricIdModal({
 }
 
 /* -------------------------------------------------------------- Modals */
+
+/**
+ * Sell a membership to a member who has none.
+ *
+ * Selling and renewing are different operations and only one applies at a
+ * time: a renewal continues from the previous end date, while this opens a
+ * term from a date reception chooses. An invoice is raised either way, which
+ * is why the Invoices tab fills in as soon as this is saved.
+ */
+function SellMembershipModal({
+  memberId,
+  onClose,
+  onDone,
+}: {
+  memberId: number
+  onClose: () => void
+  onDone: (message: string) => void
+}) {
+  const [planId, setPlanId] = useState('')
+  const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [discount, setDiscount] = useState('')
+  const [registrationFee, setRegistrationFee] = useState('')
+  const [notes, setNotes] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [errors, setErrors] = useState<Record<string, string>>({})
+
+  const { data: plans, isLoading: plansLoading } = useQuery({
+    queryKey: ['plans'],
+    queryFn: async () => (await api.get<{ data: MembershipPlan[] }>('/membership-plans')).data.data,
+  })
+
+  const plan = plans?.find((p) => String(p.id) === planId)
+
+  const sell = useMutation({
+    mutationFn: async () =>
+      (
+        await api.post('/memberships', {
+          member_id: memberId,
+          membership_plan_id: Number(planId),
+          start_date: startDate || undefined,
+          // An empty box means "nothing", not "zero" - sending 0 would write a
+          // deliberate zero discount over whatever the plan itself carries.
+          discount: discount === '' ? undefined : Number(discount),
+          registration_fee: registrationFee === '' ? undefined : Number(registrationFee),
+          notes: notes.trim() || undefined,
+        })
+      ).data,
+    onSuccess: (result: { message: string }) => onDone(result.message),
+    onError: (err) => {
+      setError(errorMessage(err))
+      setErrors(fieldErrors(err))
+    },
+  })
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Sell membership"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button loading={sell.isPending} disabled={!planId} onClick={() => sell.mutate()}>
+            Create membership
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        {error && <Alert>{error}</Alert>}
+
+        <Field label="Package" required error={errors.membership_plan_id}>
+          <Select value={planId} onChange={(e) => setPlanId(e.target.value)} disabled={plansLoading}>
+            <option value="">Choose a package…</option>
+            {plans?.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} — {p.duration_label} — {money(p.price)}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        <Field label="Starts on" required error={errors.start_date}>
+          <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+        </Field>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Discount" hint="Leave empty for none." error={errors.discount}>
+            <Input
+              type="number"
+              min="0"
+              step="0.01"
+              value={discount}
+              onChange={(e) => setDiscount(e.target.value)}
+            />
+          </Field>
+          <Field label="Registration fee" hint="Leave empty for the package default." error={errors.registration_fee}>
+            <Input
+              type="number"
+              min="0"
+              step="0.01"
+              value={registrationFee}
+              onChange={(e) => setRegistrationFee(e.target.value)}
+            />
+          </Field>
+        </div>
+
+        <Field label="Notes" error={errors.notes}>
+          <Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={1000} />
+        </Field>
+
+        {plan && (
+          <div className="rounded-lg border border-ink-200 bg-ink-50 p-4 text-sm">
+            <div className="flex justify-between py-1">
+              <span className="text-ink-500">Package price</span>
+              <span className="font-medium">{money(plan.price)}</span>
+            </div>
+            <p className="mt-2 text-xs text-ink-500">
+              The invoice is raised when this is saved. The membership admits the member once it is paid.
+            </p>
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
 
 function RenewModal({
   membership,

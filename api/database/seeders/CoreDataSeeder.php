@@ -171,7 +171,7 @@ class CoreDataSeeder extends Seeder
             [
                 'group' => 'branding',
                 'key' => 'branding.gym_name',
-                'value' => 'Gym Manager',
+                'value' => 'PROJECT KAYA',
                 'type' => 'string',
                 'label' => 'Gym name',
                 'description' => 'Shown on the sign-in screen, in the sidebar and on printed receipts and invoices.',

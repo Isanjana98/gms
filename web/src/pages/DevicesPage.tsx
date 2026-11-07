@@ -48,10 +48,6 @@ export function DevicesPage() {
 
   const [editing, setEditing] = useState<BiometricDevice | null>(null)
   const [creating, setCreating] = useState(false)
-  // Opening a door asks for a reason first. It is a deliberate pause before a
-  // physical act, and the reason is what makes the audit entry answerable
-  // when somebody reads it back a month later.
-  const [doorFor, setDoorFor] = useState<BiometricDevice | null>(null)
   const [linking, setLinking] = useState<BiometricUser | null>(null)
 
   const devices = useQuery({
@@ -119,10 +115,7 @@ export function DevicesPage() {
   const openDoor = useMutation({
     mutationFn: async ({ deviceId, reason }: { deviceId: number; reason: string }) =>
       (await api.post(`/biometric/devices/${deviceId}/open-door`, { reason })).data,
-    onSuccess: (data: { message: string }) => {
-      toast.success(data.message)
-      setDoorFor(null)
-    },
+    onSuccess: (data: { message: string }) => toast.success(data.message),
     onError: (error) => toast.error(errorMessage(error)),
   })
 
@@ -234,7 +227,22 @@ export function DevicesPage() {
                           Test
                         </Button>
                         {canOpenDoor && device.is_active && (
-                          <Button size="sm" variant="ghost" onClick={() => setDoorFor(device)}>
+                          // One press releases the lock. There is no
+                          // confirmation on purpose: the people who hold this
+                          // permission are standing at the door with a member
+                          // whose finger will not read, and a dialog in that
+                          // moment is a second thing to get past rather than a
+                          // safeguard. The audit entry is written either way,
+                          // before the reader is even contacted, so a press
+                          // that opens nothing is still on the record.
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            loading={openDoor.isPending && openDoor.variables?.deviceId === device.id}
+                            onClick={() =>
+                              openDoor.mutate({ deviceId: device.id, reason: 'Opened from the devices list' })
+                            }
+                          >
                             Open door
                           </Button>
                         )}
@@ -347,15 +355,6 @@ export function DevicesPage() {
             setEditing(null)
             refresh()
           }}
-        />
-      )}
-
-      {doorFor && (
-        <OpenDoorModal
-          device={doorFor}
-          pending={openDoor.isPending}
-          onClose={() => setDoorFor(null)}
-          onConfirm={(reason) => openDoor.mutate({ deviceId: doorFor.id, reason })}
         />
       )}
 
@@ -486,49 +485,6 @@ function LinkMemberModal({
           Any scans this device user has already made become this member&apos;s attendance, backdated to when they
           actually happened.
         </Alert>
-      </div>
-    </Modal>
-  )
-}
-
-function OpenDoorModal({
-  device,
-  pending,
-  onClose,
-  onConfirm,
-}: {
-  device: BiometricDevice
-  pending: boolean
-  onClose: () => void
-  onConfirm: (reason: string) => void
-}) {
-  const [reason, setReason] = useState('')
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title={`Open ${device.name}`}
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button loading={pending} onClick={() => onConfirm(reason.trim())}>
-            Open the door
-          </Button>
-        </>
-      }
-    >
-      <p className="text-sm text-ink-700">
-        This releases the lock on <strong>{device.name}</strong> straight away. It is recorded against your name
-        whether or not the door actually opens.
-      </p>
-
-      <div className="mt-4">
-        <Field label="Why" hint="Shown in the audit log. “Finger would not read”, “delivery”, “visitor”.">
-          <Input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={255} autoFocus />
-        </Field>
       </div>
     </Modal>
   )

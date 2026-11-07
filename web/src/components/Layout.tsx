@@ -2,6 +2,7 @@ import { Suspense, useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { P, useAuth } from '../lib/auth'
 import { BrandLogo, useBranding } from '../lib/branding'
+import { DoorButton } from './DoorButton'
 import { Avatar, Button, LoadingBlock, cx } from './ui'
 
 interface NavItem {
@@ -233,6 +234,11 @@ export function Layout() {
           </div>
         </main>
       </div>
+
+      {/* Outside <main> so it is not bound by the content column, and last in
+          the tree so it stacks above it. It renders nothing for staff without
+          the permission. */}
+      <DoorButton />
     </div>
   )
 }

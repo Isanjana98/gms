@@ -1,9 +1,7 @@
 <?php
 
-use App\Http\Controllers\Install\InstallController;
 use App\Http\Controllers\Site\HealthFormController;
 use App\Http\Controllers\Site\SiteController;
-use App\Http\Middleware\EnsureNotInstalled;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -120,22 +118,9 @@ Route::get('/admin/{path?}', function (?string $path = null) {
 | Setup
 |--------------------------------------------------------------------------
 |
-| First-run installation from a browser, for a host where there is no shell.
-|
-| Outside the `web` middleware group on purpose. That group starts a session,
-| the session driver is the database, and the database is the thing being set
-| up - so a session here would fail before the page could explain why. Without
-| a session there is also no CSRF token, which costs nothing: these routes
-| answer 404 the moment an installation exists, so there is no lasting state
-| for a forged request to reach.
-|
-| EnsureNotInstalled is what closes them, and it checks two independent
-| things - a marker file and the database - because either alone is one
-| mistake away from leaving an open door to dropping the database and creating
-| an administrator.
+| The installer is NOT here. It lives in routes/install.php, registered by
+| bootstrap/app.php, because every route in this file is in the `web`
+| middleware group - which needs an APP_KEY and a sessions table, the two
+| things the installer exists to create. See that file for the full account.
 |
 */
-Route::middleware([EnsureNotInstalled::class, 'throttle:15,1'])->group(function () {
-    Route::get('/install', [InstallController::class, 'show'])->name('install.show');
-    Route::post('/install', [InstallController::class, 'run'])->name('install.run');
-});

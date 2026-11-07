@@ -210,7 +210,96 @@ $name = 'gms-' + (Get-Date -Format 'yyyy-MM-dd-HHmm') + '.zip'
 $zip = Join-Path $Output $name
 
 if (Test-Path $zip) { Remove-Item $zip -Force }
-Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $zip -CompressionLevel Optimal
+
+<#
+    Written entry by entry, because Compress-Archive cannot be used here.
+
+    Windows PowerShell 5.1's Compress-Archive stores paths with the separator
+    the platform happens to use, so every entry comes out as `app\Http\foo.php`.
+    The ZIP specification (4.4.17.1) allows only forward slashes. Windows and
+    7-Zip quietly repair that on the way out, so the archive looks fine on the
+    machine that built it - and that is exactly what makes it dangerous.
+
+    On a Linux host a backslash is an ordinary, legal character in a filename,
+    so there is nothing to repair and nothing to warn about: the extractor
+    creates 7,000-odd files with backslashes in their names, all in one flat
+    directory. There is no public/ directory, no vendor/autoload.php at the
+    path the autoloader looks for, nothing. The site answers 500 and the log
+    is empty, because PHP never got far enough to open one.
+
+    Directory entries are written too, so the storage/ tree that Laravel
+    expects to exist survives even where it holds no files.
+#>
+Add-Type -AssemblyName System.IO.Compression | Out-Null
+Add-Type -AssemblyName System.IO.Compression.FileSystem | Out-Null
+
+<#
+    Enumerated through .NET rather than Get-ChildItem, so that the prefix
+    stripped below is byte-for-byte the prefix the items actually carry.
+
+    $env:TEMP on this machine is the 8.3 short form
+    (C:\Users\ISURU~1.SAN\...), while the PowerShell provider hands back
+    FullName in the long form (C:\Users\isuru.sanjana\...). Measuring one
+    against the other leaves the tail of the prefix on every entry - the first
+    build after this change put the whole application under a directory called
+    `e`, the last two characters of `gms-release`. DirectoryInfo builds each
+    child's FullName by concatenating the path it was given, so the two always
+    agree, whichever form was passed in.
+#>
+$stagingDir = New-Object System.IO.DirectoryInfo $staging
+$base = $stagingDir.FullName.TrimEnd('\') + '\'
+$stream = [System.IO.File]::Open($zip, [System.IO.FileMode]::CreateNew)
+$count = 0
+
+try {
+    $archive = New-Object System.IO.Compression.ZipArchive(
+        $stream, [System.IO.Compression.ZipArchiveMode]::Create)
+
+    try {
+        foreach ($item in $stagingDir.EnumerateFileSystemInfos('*', [System.IO.SearchOption]::AllDirectories)) {
+            if (-not $item.FullName.StartsWith($base, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "'$($item.FullName)' is not under '$base'; the relative path cannot be derived."
+            }
+
+            $relative = $item.FullName.Substring($base.Length).Replace('\', '/')
+
+            # A .NET FileSystemInfo has no PSIsContainer; ask its type instead.
+            if ($item -is [System.IO.DirectoryInfo]) {
+                $archive.CreateEntry($relative + '/') | Out-Null
+                continue
+            }
+
+            $entry = $archive.CreateEntry($relative, [System.IO.Compression.CompressionLevel]::Optimal)
+            $target = $entry.Open()
+
+            try {
+                $source = [System.IO.File]::OpenRead($item.FullName)
+                try { $source.CopyTo($target) } finally { $source.Dispose() }
+            }
+            finally { $target.Dispose() }
+
+            $count++
+        }
+    }
+    finally { $archive.Dispose() }
+}
+finally { $stream.Dispose() }
+
+# Read the archive back and insist on it, rather than trusting the loop above.
+# A single backslashed entry means the whole upload is unusable on the host.
+$verify = [System.IO.Compression.ZipFile]::OpenRead($zip)
+try {
+    $bad = @($verify.Entries | Where-Object { $_.FullName.Contains('\') })
+    $hasIndex = @($verify.Entries | Where-Object { $_.FullName -eq 'public/index.php' }).Count -eq 1
+    $hasLoader = @($verify.Entries | Where-Object { $_.FullName -eq 'vendor/autoload.php' }).Count -eq 1
+}
+finally { $verify.Dispose() }
+
+if ($bad.Count) {
+    throw "$($bad.Count) entries use backslashes, starting with '$($bad[0].FullName)'. This archive would not extract correctly on a Linux host."
+}
+if (-not $hasIndex)  { throw 'public/index.php is not in the archive at that path.' }
+if (-not $hasLoader) { throw 'vendor/autoload.php is not in the archive at that path.' }
 
 $size = [math]::Round((Get-Item $zip).Length / 1MB, 1)
 

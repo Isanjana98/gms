@@ -7,11 +7,13 @@ use App\Models\User;
 use App\Support\Permissions;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use PDO;
 use PDOException;
+use Spatie\Permission\PermissionRegistrar;
 
 /**
  * First-run setup, from a browser.
@@ -260,6 +262,20 @@ class Installer
     public function useDatabase(array $config): void
     {
         config([
+            /*
+             * Making it the default matters as much as configuring it.
+             *
+             * `migrate`, the seeders and every model below this point use the
+             * *default* connection, and config/database.php falls back to
+             * `env('DB_CONNECTION', 'sqlite')`. A freshly unzipped application
+             * has no .env at the moment this runs - writeEnv() has just
+             * created one, but the config was resolved at boot - so the
+             * default was still sqlite. Migration then died on the first
+             * MySQL-only statement, `near "MODIFY": syntax error`, having
+             * reported a connection to the server's MySQL that it never used.
+             */
+            'database.default' => 'mysql',
+
             'database.connections.mysql.host' => $config['host'],
             'database.connections.mysql.port' => (int) $config['port'],
             'database.connections.mysql.database' => $config['database'],
@@ -269,6 +285,25 @@ class Installer
 
         DB::purge('mysql');
         DB::reconnect('mysql');
+
+        /*
+         * Rebuild anything that resolved a cache store before this point.
+         *
+         * A database cache store is constructed with a Connection *object*
+         * rather than looking one up per call, so changing the default above
+         * does not reach a store that already exists.
+         * spatie/laravel-permission builds its store in PermissionRegistrar's
+         * constructor, which runs at boot - when the default was still
+         * sqlite. Seeding the roles then tried to flush that cache and died
+         * on `delete from "cache"` against a sqlite file that does not exist,
+         * after the migrations had already succeeded against the real MySQL
+         * database. The installation failed with the schema half in place.
+         *
+         * Forgetting the driver and the registrar makes the next resolution
+         * build both against the database just configured.
+         */
+        Cache::forgetDriver(config('cache.default'));
+        app()->forgetInstance(PermissionRegistrar::class);
     }
 
     public function migrate(): void

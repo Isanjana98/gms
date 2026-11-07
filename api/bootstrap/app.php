@@ -7,16 +7,19 @@ use App\Console\Commands\ExpireMemberships;
 use App\Console\Commands\SyncBiometricAttendance;
 use App\Console\Commands\SyncDeviceAccess;
 use App\Http\Middleware\AuthenticateFromSessionCookie;
+use App\Http\Middleware\EnsureNotInstalled;
 use App\Http\Middleware\EnsureTokenBelongsToMember;
 use App\Http\Middleware\EnsureTokenBelongsToStaff;
 use App\Http\Middleware\EnsureUserIsActive;
 use App\Http\Middleware\SecurityHeaders;
+use App\Http\Middleware\ThrottleInstall;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
 use Spatie\Permission\Exceptions\UnauthorizedException;
 use Spatie\Permission\Middleware\PermissionMiddleware;
 use Spatie\Permission\Middleware\RoleMiddleware;
@@ -28,6 +31,21 @@ return Application::configure(basePath: dirname(__DIR__))
         api: __DIR__.'/../routes/api.php',
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
+        /*
+         * The installer, registered here rather than in routes/web.php so
+         * that it gets exactly the two middleware named and nothing else.
+         *
+         * `web:` above applies the `web` group to every route in that file,
+         * and a `Route::middleware([...])->group()` nested inside it adds to
+         * the group instead of replacing it. With `web` attached, a freshly
+         * unzipped application answered /install with a 500: EncryptCookies
+         * wants an APP_KEY and StartSession wants a sessions table, and the
+         * installer is what creates both. routes/install.php has the detail.
+         */
+        then: function (): void {
+            Route::middleware([EnsureNotInstalled::class, ThrottleInstall::class])
+                ->group(__DIR__.'/../routes/install.php');
+        },
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
