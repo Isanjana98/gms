@@ -462,16 +462,35 @@ class HikvisionDriver implements DeviceDriver
      */
     private function client(int $retries = 2): PendingRequest
     {
+        $options = ['verify' => $this->shouldVerifyTls()];
+
+        /*
+         * Only send credentials when there are credentials to send.
+         *
+         * Guzzle rejects a null username with "Passing null to request option
+         * auth.0 is invalid; expected string" - a type error raised before any
+         * request is attempted, so it surfaces as an unreadable failure rather
+         * than as the authentication problem it describes. A device record
+         * legitimately has no username when the reader only ever pushes to us
+         * and is never called in the other direction.
+         *
+         * Omitted, the request goes out unauthenticated and the device answers
+         * 401, which assertOk() and testConnection() already turn into "check
+         * the device credentials".
+         */
+        $username = $this->device->username;
+
+        if (is_string($username) && $username !== '') {
+            // ISAPI is digest, not basic. Guzzle handles the challenge.
+            $options['auth'] = [$username, (string) $this->device->password, 'digest'];
+        }
+
         return Http::baseUrl($this->device->base_url)
             ->timeout((int) config('gms.biometric.http_timeout', 15))
             // A reader on a flaky in-house LAN drops the odd connection;
             // retrying costs less than a missed check-in.
             ->retry($retries, 250, throw: false)
-            ->withOptions([
-                // ISAPI is digest, not basic. Guzzle handles the challenge.
-                'auth' => [$this->device->username, $this->device->password, 'digest'],
-                'verify' => $this->shouldVerifyTls(),
-            ])
+            ->withOptions($options)
             ->acceptJson();
     }
 
@@ -494,27 +513,34 @@ class HikvisionDriver implements DeviceDriver
      */
     private function shouldVerifyTls(): bool
     {
+        return ! $this->addressIsLocalOnly();
+    }
+
+    /**
+     * Whether the device's address can only be reached from its own network.
+     *
+     * A literal private or reserved address is a LAN device: 192.168.x.x,
+     * 10.x.x.x, 172.16-31.x.x, 127.x.x.x and the IPv6 equivalents. For
+     * hostnames, `.local` and a bare name with no dot are LAN naming;
+     * anything else resolves on the public internet.
+     */
+    private function addressIsLocalOnly(): bool
+    {
         $host = parse_url($this->device->base_url, PHP_URL_HOST);
 
         if (! is_string($host) || $host === '') {
-            return true;
+            return false;
         }
-
-        // A literal private or reserved address is a LAN device: 192.168.x.x,
-        // 10.x.x.x, 172.16-31.x.x, 127.x.x.x and the IPv6 equivalents.
-        $isPublicIp = filter_var(
-            $host,
-            FILTER_VALIDATE_IP,
-            FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE,
-        ) !== false;
 
         if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
-            return $isPublicIp;
+            return filter_var(
+                $host,
+                FILTER_VALIDATE_IP,
+                FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE,
+            ) === false;
         }
 
-        // A hostname. `.local` and a bare name with no dot are LAN naming;
-        // anything else resolves on the public internet and is verified.
-        return ! (str_ends_with($host, '.local') || ! str_contains($host, '.'));
+        return str_ends_with($host, '.local') || ! str_contains($host, '.');
     }
 
     /**
@@ -650,10 +676,38 @@ class HikvisionDriver implements DeviceDriver
         $message = $e->getMessage();
 
         return match (true) {
-            str_contains($message, 'cURL error 28') || str_contains($message, 'timed out') => 'Device did not respond in time. Check that it is powered on and reachable on the network.',
-            str_contains($message, 'cURL error 7') || str_contains($message, 'Connection refused') => "Could not connect to {$this->device->ip_address}:{$this->device->port}. Check the IP address and port.",
-            str_contains($message, 'Could not resolve host') => 'Could not resolve the device address.',
+            str_contains($message, 'cURL error 28') || str_contains($message, 'timed out') => 'Device did not respond in time. '.$this->unreachableHint(),
+            str_contains($message, 'cURL error 7') || str_contains($message, 'Connection refused') => "Could not connect to {$this->device->ip_address}:{$this->device->port}. ".$this->unreachableHint(),
+            str_contains($message, 'Could not resolve host') => "Could not resolve the device address {$this->device->ip_address}.",
             default => $message,
         };
+    }
+
+    /**
+     * Why the reader might be out of reach, given the address it has.
+     *
+     * "Check that it is powered on" is the right advice on a gym LAN and
+     * actively misleading anywhere else. A hosted installation cannot reach
+     * 192.168.x.x at all - no amount of checking the reader will change
+     * that - and somebody who has just confirmed the device is on, pingable
+     * and answering on port 80 is left with a message insisting otherwise.
+     *
+     * So the hint is chosen from the address: a private one can only be
+     * reached from inside the same network, and saying so points at the real
+     * problem instead of sending someone back to the hardware.
+     */
+    private function unreachableHint(): string
+    {
+        if ($this->addressIsLocalOnly()) {
+            return sprintf(
+                '%s is a local network address, so only a server on that same network can reach it. '
+                .'If this system is hosted elsewhere, it cannot reach the reader directly - '
+                .'see docs/BIOMETRIC-SETUP.md for the ways round that. '
+                .'Otherwise check the reader is powered on and on the same network.',
+                $this->device->ip_address,
+            );
+        }
+
+        return 'Check that it is powered on and reachable on the network.';
     }
 }

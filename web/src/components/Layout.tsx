@@ -34,6 +34,8 @@ const ICONS = {
   expenses: 'M9 14l3 3 3-3M12 17V9M6 3h12a1 1 0 011 1v16l-3-2-2 2-2-2-2 2-3-2V4a1 1 0 011-1z',
   website: 'M12 21a9 9 0 100-18 9 9 0 000 18zm0 0c2.5-2.3 3.8-5.3 3.8-9S14.5 5.3 12 3M12 21c-2.5-2.3-3.8-5.3-3.8-9S9.5 5.3 12 3M3.6 9h16.8M3.6 15h16.8',
   leads: 'M3 8l9 6 9-6M5 5h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z',
+  // A QR-ish grid: this is the page that hands out the printed code.
+  registrations: 'M4 4h6v6H4V4zm10 0h6v6h-6V4zM4 14h6v6H4v-6zm10 3h3m0 0v3m0-3h3m-6-3h6',
   devices: 'M12 11a3 3 0 013 3v6m-3-9a3 3 0 00-3 3v6M7 8a5 5 0 0110 0M4 9a8 8 0 0116 0',
   reports: 'M7 16v-5m5 5V8m5 8v-3M5 21h14a1 1 0 001-1V4a1 1 0 00-1-1H5a1 1 0 00-1 1v16a1 1 0 001 1z',
   trainers: 'M6.5 6.5h11M6.5 17.5h11M4 9v6m16-6v6M8 8v8m8-8v8',
@@ -75,6 +77,12 @@ const NAV: Array<{ section: string; items: NavItem[] }> = [
     section: 'Website',
     items: [
       { to: '/leads', label: 'Enquiries', icon: <Icon path={ICONS.leads} />, permission: P.leadsView },
+      {
+        to: '/registrations',
+        label: 'Sign-ups',
+        icon: <Icon path={ICONS.registrations} />,
+        permission: P.registrationsView,
+      },
       { to: '/website', label: 'Website', icon: <Icon path={ICONS.website} />, permission: P.websiteManage },
     ],
   },

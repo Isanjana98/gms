@@ -25,6 +25,9 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage').then((m) => ({ 
 const DevicesPage = lazy(() => import('./pages/DevicesPage').then((m) => ({ default: m.DevicesPage })))
 const ExpensesPage = lazy(() => import('./pages/ExpensesPage').then((m) => ({ default: m.ExpensesPage })))
 const LeadsPage = lazy(() => import('./pages/LeadsPage').then((m) => ({ default: m.LeadsPage })))
+const RegistrationsPage = lazy(() =>
+  import('./pages/RegistrationsPage').then((m) => ({ default: m.RegistrationsPage })),
+)
 const WebsitePage = lazy(() => import('./pages/WebsitePage').then((m) => ({ default: m.WebsitePage })))
 const MemberDetailPage = lazy(() => import('./pages/MemberDetailPage').then((m) => ({ default: m.MemberDetailPage })))
 const MembershipsPage = lazy(() => import('./pages/MembershipsPage').then((m) => ({ default: m.MembershipsPage })))
@@ -124,6 +127,7 @@ export default function App() {
               <Route path="users" element={<RequirePermission permission="users.manage"><UsersPage /></RequirePermission>} />
               <Route path="website" element={<RequirePermission permission="website.manage"><WebsitePage /></RequirePermission>} />
               <Route path="leads" element={<RequirePermission permission="leads.view"><LeadsPage /></RequirePermission>} />
+              <Route path="registrations" element={<RequirePermission permission="registrations.view"><RegistrationsPage /></RequirePermission>} />
               <Route path="settings" element={<RequirePermission permission="settings.manage"><SettingsPage /></RequirePermission>} />
               <Route path="audit" element={<RequirePermission permission="audit.view"><AuditPage /></RequirePermission>} />
             </Route>

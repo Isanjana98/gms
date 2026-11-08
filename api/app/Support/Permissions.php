@@ -49,6 +49,20 @@ final class Permissions
 
     public const HEALTH_REVIEW = 'health.review';
 
+    /*
+     * Self-registration from the printed QR code.
+     *
+     * Separate from members.create on purpose. Approving a registration does
+     * create a member, but the two are not the same job: one is typing
+     * somebody's details in yourself, the other is accepting what a stranger
+     * typed from a code on the wall. A gym may well want the second to need a
+     * more senior pair of eyes, and cannot express that if one permission
+     * covers both.
+     */
+    public const REGISTRATIONS_VIEW = 'registrations.view';
+
+    public const REGISTRATIONS_REVIEW = 'registrations.review';
+
     // Memberships & plans
     public const PLANS_VIEW = 'plans.view';
 
@@ -254,6 +268,15 @@ final class Permissions
             // Website enquiries are reception's to chase, and converting one
             // into a member is exactly the job they already do.
             self::LEADS_VIEW, self::LEADS_MANAGE,
+            /*
+             * Both halves, because reception is standing there while the
+             * person fills the form in. Requiring a manager to approve every
+             * walk-in would mean the QR saves nobody any time, and reception
+             * already has MEMBERS_CREATE - they could type the same details
+             * in by hand. A gym that wants a second pair of eyes can take
+             * REGISTRATIONS_REVIEW away; that is what the split is for.
+             */
+            self::REGISTRATIONS_VIEW, self::REGISTRATIONS_REVIEW,
         ];
 
         return [

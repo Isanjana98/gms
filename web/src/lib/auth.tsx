@@ -121,6 +121,11 @@ export const P = {
   healthView: 'health.view',
   healthIssue: 'health.issue',
   healthReview: 'health.review',
+  // Self-registrations from the printed QR. Separate from members.create:
+  // accepting what a stranger typed is not the same job as typing it in
+  // yourself, and a gym may want the first to need more senior eyes.
+  registrationsView: 'registrations.view',
+  registrationsReview: 'registrations.review',
   documentsManage: 'documents.manage',
   plansView: 'plans.view',
   plansManage: 'plans.manage',

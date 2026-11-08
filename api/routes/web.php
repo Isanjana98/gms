@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Site\HealthFormController;
+use App\Http\Controllers\Site\JoinController;
 use App\Http\Controllers\Site\SiteController;
 use Illuminate\Support\Facades\Route;
 
@@ -112,6 +113,31 @@ Route::get('/admin/{path?}', function (?string $path = null) {
         'Cache-Control' => 'no-store, private',
     ]);
 })->where('path', '.*')->name('admin');
+
+/*
+|--------------------------------------------------------------------------
+| Self-registration from the QR code at the desk
+|--------------------------------------------------------------------------
+|
+| Open to anyone who can see a printed code, which is the point - and the
+| reason for every limit on it. A submission creates a pending registration
+| and nothing else; no member exists until somebody at the desk approves it.
+|
+| These need the `web` group, unlike the installer: the form posts a CSRF
+| token and uses the session to carry a first name to the confirmation page.
+|
+| Throttled harder than the health form. That one needs a token somebody was
+| handed; this one needs only a glance at a wall, so the same limit would let
+| a single machine fill the review queue with rubbish. 6 a minute is slow
+| enough to make that pointless and far above what a person filling in a form
+| on their phone will ever reach.
+|
+*/
+Route::name('site.join.')->middleware('throttle:6,1')->group(function () {
+    Route::get('/join/{code}/done', [JoinController::class, 'done'])->name('done');
+    Route::get('/join/{code}', [JoinController::class, 'show'])->name('show');
+    Route::post('/join/{code}', [JoinController::class, 'submit'])->name('submit');
+});
 
 /*
 |--------------------------------------------------------------------------

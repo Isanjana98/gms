@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\HealthScreening;
 use App\Models\Member;
 use App\Models\MemberDocument;
+use App\Models\MemberRegistration;
 use App\Models\User;
 use App\Support\GymSettings;
 use App\Support\ParQ;
@@ -148,6 +149,70 @@ class HealthScreeningService
             // The link is spent. Re-screening issues a new one.
             'token_hash' => null,
         ]);
+
+        $screening->record_hash = $this->recordHash($screening);
+        $screening->save();
+
+        return $screening;
+    }
+
+    /**
+     * Carry an approved self-registration's PAR-Q across to the new member.
+     *
+     * Somebody answered eight medical questions and signed them before they
+     * were a member of anything. Approving the registration has just made
+     * them one, and without this that signature would stay on a row nobody
+     * reviews while the member appeared in the system with no screening on
+     * file - which is the exact state this whole feature exists to prevent.
+     *
+     * The screening is created already COMPLETED. It is not a second form for
+     * the member to fill in; it is the one they already filled in, now
+     * attached to the record it belongs to. The signature file is copied
+     * rather than moved, so the registration keeps its own evidence of what
+     * was signed even if the member is later deleted.
+     *
+     * @param  MemberRegistration  $registration
+     */
+    public function recordSelfRegistered(Member $member, $registration): HealthScreening
+    {
+        $terms = $this->terms($member->branch_id);
+        $answers = $registration->parq_answers ?? [];
+        $flagCount = (int) $registration->parq_flag_count;
+
+        $screening = $this->numbers->withRetry(fn () => HealthScreening::create([
+            'member_id' => $member->getKey(),
+            'branch_id' => $member->branch_id,
+            'reference' => $this->numbers->screeningReference(),
+            'status' => 'COMPLETED',
+            'answers' => $answers,
+            'has_flags' => $flagCount > 0,
+            'flag_count' => $flagCount,
+            // The version the person actually answered under, not today's.
+            'questionnaire_version' => $registration->parq_version ?? ParQ::VERSION,
+            'terms_version' => $terms['version'],
+            'terms_hash' => $terms['hash'],
+            'signed_name' => $registration->signed_name,
+            'signed_at' => $registration->signed_at,
+            'ip_address' => $registration->ip_address,
+            'user_agent' => $registration->user_agent ? Str::limit($registration->user_agent, 490, '') : null,
+            'review_status' => $flagCount > 0 ? 'PENDING' : 'NOT_REQUIRED',
+        ]));
+
+        if ($registration->signature_path !== null) {
+            $source = Storage::disk(HealthScreening::DISK);
+
+            if ($source->exists($registration->signature_path)) {
+                $path = sprintf(
+                    'members/%d/screenings/%s-%s.png',
+                    $member->getKey(),
+                    $screening->reference,
+                    Str::random(8),
+                );
+
+                $source->put($path, $source->get($registration->signature_path));
+                $screening->signature_path = $path;
+            }
+        }
 
         $screening->record_hash = $this->recordHash($screening);
         $screening->save();

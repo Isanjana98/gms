@@ -21,10 +21,12 @@ use App\Http\Controllers\Api\Member\MemberAuthController;
 use App\Http\Controllers\Api\Member\MemberPortalController;
 use App\Http\Controllers\Api\MemberController;
 use App\Http\Controllers\Api\MemberDocumentController;
+use App\Http\Controllers\Api\MemberRegistrationController;
 use App\Http\Controllers\Api\MembershipController;
 use App\Http\Controllers\Api\MembershipPlanController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PaymentController;
+use App\Http\Controllers\Api\RegistrationQuestionController;
 use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\SettingController;
 use App\Http\Controllers\Api\TrainerController;
@@ -182,6 +184,38 @@ Route::middleware(['auth:sanctum', 'staff.only', 'active.user'])->group(function
 
     Route::post('members/{member}/health-screenings', [HealthScreeningController::class, 'issue'])
         ->middleware('permission:'.Permissions::HEALTH_ISSUE)->name('health.issue');
+
+    /*
+     * Self-registrations from the printed QR code.
+     *
+     * `qr` is declared before `{registration}` on purpose: route matching is
+     * first-come, so the other order would read the word "qr" as a model id
+     * and answer 404 for the one URL that has no model behind it.
+     */
+    Route::get('member-registrations/qr', [MemberRegistrationController::class, 'qr'])
+        ->name('registrations.qr');
+    Route::get('member-registrations', [MemberRegistrationController::class, 'index'])
+        ->name('registrations.index');
+    Route::get('member-registrations/{registration}', [MemberRegistrationController::class, 'show'])
+        ->name('registrations.show');
+    Route::get('member-registrations/{registration}/signature', [MemberRegistrationController::class, 'signature'])
+        ->name('registrations.signature');
+    Route::post('member-registrations/{registration}/approve', [MemberRegistrationController::class, 'approve'])
+        ->name('registrations.approve');
+    Route::post('member-registrations/{registration}/reject', [MemberRegistrationController::class, 'reject'])
+        ->name('registrations.reject');
+
+    // The gym's own extra questions on the joining form. Reading them needs
+    // only REGISTRATIONS_VIEW so the review screen can list them; changing
+    // them is configuration, and checked inside the controller.
+    Route::get('registration-questions', [RegistrationQuestionController::class, 'index'])
+        ->name('registration-questions.index');
+    Route::post('registration-questions', [RegistrationQuestionController::class, 'store'])
+        ->name('registration-questions.store');
+    Route::put('registration-questions/{question}', [RegistrationQuestionController::class, 'update'])
+        ->name('registration-questions.update');
+    Route::delete('registration-questions/{question}', [RegistrationQuestionController::class, 'destroy'])
+        ->name('registration-questions.destroy');
 
     Route::post('health-screenings/{screening}/review', [HealthScreeningController::class, 'review'])
         ->middleware('permission:'.Permissions::HEALTH_REVIEW)->name('health.review');
