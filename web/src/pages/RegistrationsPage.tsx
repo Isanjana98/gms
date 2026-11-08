@@ -206,7 +206,11 @@ export function RegistrationsPage() {
                       <span className="text-ink-500">Clear</span>
                     )}
                   </Td>
-                  <Td title={dateTime(r.created_at)}>{relative(r.created_at)}</Td>
+                  <Td>
+                    {/* Td takes no title, so the exact timestamp hangs off a
+                        span inside it rather than the cell. */}
+                    <span title={dateTime(r.created_at)}>{relative(r.created_at)}</span>
+                  </Td>
                   <Td>
                     <Badge tone={STATUS_TONE[r.status]}>{r.status.toLowerCase()}</Badge>
                     {r.member && (
