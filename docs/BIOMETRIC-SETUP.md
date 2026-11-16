@@ -143,27 +143,60 @@ That one property is what makes the rest safe:
   special recovery path. It is just a larger ordinary pull (SRS §14).
 - An event that arrives by push and again by pull is stored once.
 
-### Push (optional, faster)
+### Push (the reader posts to us)
 
-Configure the reader's **HTTP Host / Event notification** to post to:
-
-```
-http://<server>/api/biometric/push/<device-code>
-```
-
-with header:
+Configure the reader's **HTTP Host / Event notification** — on Hikvision,
+*Network → Advanced → HTTP Listening* — to post to:
 
 ```
-X-GMS-Token: <the value of BIOMETRIC_PUSH_TOKEN in .env>
+https://<server>/api/biometric/push/<device-code>?token=<BIOMETRIC_PUSH_TOKEN>
 ```
 
 This is the only endpoint a device talks to. It authenticates with a shared
 secret compared in constant time — a reader cannot hold a bearer token.
 
-**Leave pull enabled alongside it.** Push notifications stop silently if the
-device loses the server's address, and a notification that never arrives looks
-exactly like a quiet gym. A poll that finds nothing is visibly a poll that
-found nothing.
+**Put the token in the query string, not a header.** The endpoint accepts
+either `X-GMS-Token:` or `?token=`, but a terminal's own UI has no field for a
+custom header, so on a DS-K1T321MFWX and similar models the header form cannot
+be entered at all.
+
+Three fields have to agree with each other, and a mismatch fails silently —
+nothing reaches the application log, and nothing appears in the web server's
+access log either:
+
+| Field | Value |
+|---|---|
+| Protocol type | `HTTPS`. Plain `HTTP` aimed at port 443 is dropped during the TLS handshake and never becomes a request at all |
+| Port | `443` for HTTPS, `80` for HTTP |
+| URL | the path **and** query string above — 128 characters maximum |
+
+Read the configuration back afterwards rather than trusting the screen, since
+some firmware rewrites the URL or drops the `?`:
+
+```
+curl --digest -u admin:<password> \
+  "http://<device-ip>/ISAPI/Event/notification/httpHosts/1"
+```
+
+The same response carries the event subscription. Access events arrive only if
+`AccessControllerEvent` appears in the `EventList`, with `eventMode` set to
+`all` or to a list containing the minor codes you want.
+
+Leave **Save Picture When Auth** switched off. On several Hikvision access
+terminals a failed picture upload retries indefinitely and buries real events.
+
+**Leave pull enabled alongside it — when the server can reach the reader.**
+Push notifications stop silently if the device loses the server's address, and
+a notification that never arrives looks exactly like a quiet gym. A poll that
+finds nothing is visibly a poll that found nothing.
+
+**When the server cannot reach the reader**, set sync mode to `PUSH` and
+`BIOMETRIC_SYNC_ENABLED=false`. This is the normal case for a reader on a
+private address with the system hosted elsewhere. Otherwise the scheduled pull
+fails every cycle and `markFailure()` writes `ERROR` over the `ONLINE` that
+each successful push has just set, so a perfectly working push reads as a
+broken device. See *What needs the server to reach the reader* for how to
+restore the other direction.
 
 ---
 
@@ -197,6 +230,41 @@ registered in the system first.
 5. Run it by hand and watch: `php artisan biometric:sync --device=ENT-01`
 6. Are the events arriving but `unmatched`? Nobody has mapped those device
    users to members. Use **Read users** and then match them.
+
+#### If push specifically is silent
+
+A device that is pushing nothing looks identical to a device that is switched
+off, so work from the outside in.
+
+1. Prove the endpoint itself. From any machine:
+
+   ```
+   curl -i -X POST "https://<server>/api/biometric/push/<device-code>?token=<token>"
+   ```
+
+   `{"message":"Acknowledged."}` means the endpoint, the token and TLS are all
+   fine, and the problem is on the device.
+
+2. Find the reader's **public** IP — not its LAN address — and search the web
+   server's visitor log for it. Hik-Connect shows it, under the device's
+   network information.
+
+   Nothing from that IP means the device is not reaching the server at all:
+   check the protocol/port pairing above first, as that failure leaves no
+   trace anywhere.
+
+3. Watch out for your own test traffic. A request in the log from a different
+   address, with a user agent like `PostmanRuntime` or `curl`, is yours. The
+   device identifies itself as a Hikvision client.
+
+4. `401` in the application log with `Rejected biometric push with an invalid
+   token` means the request arrived and the secret did not match — a truncated
+   URL, or a query string the firmware dropped.
+
+5. The device sends a heartbeat on the interval in its `SubscribeEvent`
+   configuration (30 seconds is typical), so you should not have to wait long
+   for a request to appear. Heartbeats are answered with `Acknowledged.` and
+   mark the device online without creating attendance.
 
 ---
 
@@ -382,7 +450,32 @@ terminal. Three things depend on it and will not work otherwise:
 
 That matters for a hosted installation. A reader sitting on the gym's LAN
 behind NAT can post events out to a public site perfectly well, but the site
-cannot call back in. If you want door control and automatic lockout on a hosted
-system, the reader needs to be reachable — which in practice means running the
-system on the gym's own network, not that you should expose a fingerprint
-terminal to the internet.
+cannot call back in. Attendance keeps working; door control and automatic
+lockout do not.
+
+There are three ways to restore the second direction, and only one of them is
+a good idea:
+
+- **A reverse tunnel.** A small relay process on any always-on machine on the
+  gym LAN holds an outbound connection open and forwards requests in. No open
+  ports, no public IP, works behind CGNAT, and the reader is never directly
+  exposed. Full procedure in `deploy/TUNNEL-SETUP.md`. The device address in
+  the panel becomes the tunnel's hostname, which the `ip_address` field
+  accepts — it is validated as a string, not an IP.
+- **Run the system on the gym's own network** and let the public website be
+  the hosted part.
+- **Port forwarding.** Works, and puts a terminal holding members' biometric
+  templates directly on the internet, where that device class is scanned
+  constantly. Don't.
+
+Whichever you choose, the device's admin username and password must be filled
+in on the device record. They are optional while the reader only pushes to us;
+the moment the system calls the device, a blank password means `401` on every
+request.
+
+If you cannot do any of these, you can still get most of the benefit offline:
+set each user's `Valid.endTime` on the reader to their membership expiry at
+enrolment. The terminal then refuses an expired member on its own, with no
+network at all — stronger than a cloud check, because it survives an outage.
+The gap is renewals, which need a write to the device before the member can
+come back in.
