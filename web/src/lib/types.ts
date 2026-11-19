@@ -82,11 +82,15 @@ export interface MemberSummary {
   status?: MemberStatus
   photo_url?: string | null
   membership_expires_on?: string | null
+  /** The other half of a couple package, when the endpoint loaded it. */
+  partner?: { id: number; full_name: string; membership_number: string } | null
 }
 
 export interface Member extends MemberSummary {
   branch_id: number
   trainer_id: number | null
+  /** The other half of a couple package. Kept symmetrical by the API. */
+  partner_member_id?: number | null
   nic_passport?: string | null
   date_of_birth?: string | null
   age?: number | null

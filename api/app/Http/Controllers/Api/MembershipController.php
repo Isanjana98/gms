@@ -27,9 +27,28 @@ class MembershipController extends Controller
             ->when($request->filled('member_id'), fn ($q) => $q->where('member_id', $request->integer('member_id')))
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
             ->when($request->filled('payment_status'), fn ($q) => $q->where('payment_status', $request->string('payment_status')))
+            // Reception searches for the person, not the membership: a name,
+            // a membership number or a phone. The reference is matched too,
+            // because that is what a printed receipt carries.
+            ->when($request->filled('search'), function ($q) use ($request) {
+                $term = $request->string('search')->toString();
+                $like = '%'.str_replace(['%', '_'], ['\%', '\_'], trim($term)).'%';
+
+                $q->where(function ($w) use ($term, $like) {
+                    $w->where('reference', 'like', $like)
+                        ->orWhereHas('member', fn ($m) => $m->search($term));
+                });
+            })
             ->when($request->filled('plan_id'), fn ($q) => $q->where('membership_plan_id', $request->integer('plan_id')))
             ->when($request->filled('expiring_before'), fn ($q) => $q->whereDate('end_date', '<=', $request->date('expiring_before')))
-            ->with(['member:id,full_name,membership_number,telephone,status,photo_path,membership_expires_on', 'plan:id,name,code'])
+            ->with([
+                // partner_member_id is in the column list because it is the
+                // key the partner relation loads from; without it Laravel
+                // has nothing to match on and every partner comes back null.
+                'member:id,full_name,membership_number,telephone,status,photo_path,membership_expires_on,partner_member_id',
+                'member.partner:id,full_name,membership_number',
+                'plan:id,name,code',
+            ])
             ->orderByDesc('created_at')
             ->paginate($this->perPage($request));
 

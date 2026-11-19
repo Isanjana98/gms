@@ -591,6 +591,24 @@ function DeviceModal({
             <Input type="number" value={String(form.port)} onChange={set('port')} />
           </Field>
 
+          {/* Without this the scheme is always http, and a reader reached over
+              a tunnel on 443 answers "plain HTTP request was sent to HTTPS
+              port" — a confusing failure for a device that is working fine. */}
+          <Field
+            label="Connection"
+            hint="Tick when the reader is reached over a tunnel or proxy on port 443."
+          >
+            <label className="flex items-center gap-2 pt-2 text-sm text-ink-700">
+              <input
+                type="checkbox"
+                checked={Boolean(form.use_https)}
+                onChange={(e) => setForm((prev) => ({ ...prev, use_https: e.target.checked }))}
+                className="h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-600"
+              />
+              Use HTTPS
+            </label>
+          </Field>
+
           <Field label="Device username" error={errors.username}>
             <Input value={String(form.username)} onChange={set('username')} autoComplete="off" />
           </Field>

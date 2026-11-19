@@ -37,6 +37,16 @@ class MemberResource extends JsonResource
             'last_visit_at' => $this->last_visit_at?->toIso8601String(),
             'total_visits' => $this->total_visits,
 
+            'partner_member_id' => $this->partner_member_id,
+            // Deliberately a flat shape rather than another MemberResource:
+            // a partner points back at this member, and nesting the full
+            // resource would recurse until something gave way.
+            'partner' => $this->whenLoaded('partner', fn () => $this->partner === null ? null : [
+                'id' => $this->partner->id,
+                'full_name' => $this->partner->full_name,
+                'membership_number' => $this->partner->membership_number,
+            ]),
+
             'branch' => new BranchResource($this->whenLoaded('branch')),
             'trainer' => new TrainerResource($this->whenLoaded('trainer')),
             'current_membership' => new MembershipResource($this->whenLoaded('currentMembership')),

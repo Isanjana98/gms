@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useToast } from './Toast'
 import { cx } from './ui'
 import { api, errorMessage } from '../lib/api'
@@ -18,6 +18,34 @@ import type { BiometricDevice } from '../lib/types'
  * `devices.open_door` AND there is at least one active reader, so for most
  * staff it does not exist.
  */
+/** Where the button was last dragged to, per browser. */
+const POSITION_KEY = 'gms.door-button.position'
+
+/** Keeps the button clear of the viewport edges when dragged or on resize. */
+const EDGE = 8
+
+type Point = { x: number; y: number }
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), Math.max(min, max))
+}
+
+function readStoredPosition(): Point | null {
+  try {
+    const raw = localStorage.getItem(POSITION_KEY)
+    if (!raw) return null
+
+    const parsed = JSON.parse(raw) as Partial<Point>
+    return typeof parsed?.x === 'number' && typeof parsed?.y === 'number'
+      ? { x: parsed.x, y: parsed.y }
+      : null
+  } catch {
+    // Private windows and blocked site data both throw here. The button
+    // simply starts in its default corner.
+    return null
+  }
+}
+
 export function DoorButton() {
   const { can } = useAuth()
   const toast = useToast()
@@ -25,6 +53,16 @@ export function DoorButton() {
 
   const [listOpen, setListOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
+
+  // null means "never moved", which keeps the default bottom-right anchoring
+  // and its safe-area padding rather than pinning a pixel position.
+  const [position, setPosition] = useState<Point | null>(readStoredPosition)
+  const positionRef = useRef<Point | null>(position)
+
+  const drag = useRef<{ dx: number; dy: number; startX: number; startY: number } | null>(null)
+  // Read by onClick. Reset on every pointerdown, so a drag that ends off the
+  // button can never swallow the next genuine press.
+  const dragged = useRef(false)
 
   // Its own key, not the devices page's: that query asks for inactive readers
   // too, and sharing a key would hand this button doors it must not offer.
@@ -69,6 +107,85 @@ export function DoorButton() {
     }
   }, [listOpen])
 
+  // A button parked near the right edge of a wide window would otherwise sit
+  // off-screen on a narrow one, unreachable and with no way to bring it back.
+  useEffect(() => {
+    const onResize = () => {
+      const el = wrapRef.current
+      const current = positionRef.current
+      if (!el || !current) return
+
+      const rect = el.getBoundingClientRect()
+      const next = {
+        x: clamp(current.x, EDGE, window.innerWidth - rect.width - EDGE),
+        y: clamp(current.y, EDGE, window.innerHeight - rect.height - EDGE),
+      }
+
+      positionRef.current = next
+      setPosition(next)
+    }
+
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    // The door list is a menu, not a handle: dragging from it would make
+    // choosing a door almost impossible on a touchscreen.
+    if ((e.target as HTMLElement).closest('[role="menu"]')) return
+
+    const el = wrapRef.current
+    if (!el || e.button !== 0) return
+
+    const rect = el.getBoundingClientRect()
+    dragged.current = false
+    drag.current = {
+      dx: e.clientX - rect.left,
+      dy: e.clientY - rect.top,
+      startX: e.clientX,
+      startY: e.clientY,
+    }
+    el.setPointerCapture(e.pointerId)
+  }
+
+  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = drag.current
+    const el = wrapRef.current
+    if (!d || !el) return
+
+    // A press that wanders a pixel or two is still a press. Only past the
+    // threshold does this become a drag and stop being a door release.
+    if (!dragged.current && Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < 5) return
+    dragged.current = true
+
+    const rect = el.getBoundingClientRect()
+    const next = {
+      x: clamp(e.clientX - d.dx, EDGE, window.innerWidth - rect.width - EDGE),
+      y: clamp(e.clientY - d.dy, EDGE, window.innerHeight - rect.height - EDGE),
+    }
+
+    positionRef.current = next
+    setPosition(next)
+  }
+
+  const onPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const wasDragging = drag.current !== null
+    drag.current = null
+    if (!wasDragging) return
+
+    wrapRef.current?.releasePointerCapture(e.pointerId)
+    if (!dragged.current) return
+
+    try {
+      if (positionRef.current) {
+        localStorage.setItem(POSITION_KEY, JSON.stringify(positionRef.current))
+      }
+    } catch {
+      // Not worth telling anyone about: the button stays where it was put
+      // for this visit and returns to the corner on the next one.
+    }
+  }
+
   const active = devices.data ?? []
   if (!canOpen || active.length === 0) return null
 
@@ -82,13 +199,24 @@ export function DoorButton() {
       // mobile backdrop (30), the drawer (40), modals (50/70) and toasts (80).
       // At z-40 it tied with the drawer and, being later in the tree, painted
       // over it - a button floating on top of the open menu, still live.
-      className="no-print fixed bottom-5 right-5 z-20"
-      style={{
-        // Clear of the phone's home indicator and of a side system bar; both
-        // resolve to 0 on a desktop, so the offsets above still apply.
-        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-        paddingRight: 'env(safe-area-inset-right, 0px)',
-      }}
+      className={cx('no-print fixed z-20', position === null && 'bottom-5 right-5')}
+      style={
+        position === null
+          ? {
+              // Clear of the phone's home indicator and of a side system bar;
+              // both resolve to 0 on a desktop, so the offsets above still
+              // apply.
+              paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+              paddingRight: 'env(safe-area-inset-right, 0px)',
+            }
+          : // Once moved, the position is explicit and already kept inside the
+            // viewport, so the insets have nothing left to protect against.
+            { left: position.x, top: position.y }
+      }
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
     >
       {listOpen && !single && (
         <div
@@ -124,12 +252,20 @@ export function DoorButton() {
         // nothing in between it and the lock. More than one, and the press
         // has to ask which - a list of doors is information, not a
         // confirmation step.
-        onClick={() => (single ? openDoor.mutate(single) : setListOpen((v) => !v))}
+        onClick={() => {
+          // Let go after moving it and nothing should open.
+          if (dragged.current) return
+          if (single) openDoor.mutate(single)
+          else setListOpen((v) => !v)
+        }}
         disabled={busy}
         aria-label={single ? `Open ${single.name}` : 'Open a door'}
         aria-expanded={single ? undefined : listOpen}
-        title={single ? `Open ${single.name}` : 'Open a door'}
+        title={single ? `Open ${single.name} · drag to move` : 'Open a door · drag to move'}
         className={cx(
+          // touch-none on the button only: a drag starting here must not
+          // scroll the page, while the door list above stays scrollable.
+          'touch-none select-none active:cursor-grabbing',
           'flex items-center gap-2 rounded-full bg-brand-600 py-3 pl-4 pr-5 text-sm font-semibold text-white shadow-lg transition',
           'hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2',
           'disabled:cursor-not-allowed disabled:opacity-70',

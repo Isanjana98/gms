@@ -27,6 +27,15 @@ class MemberSummaryResource extends JsonResource
             'status' => $this->status?->value,
             'photo_url' => $this->photo_path ? url('storage/'.$this->photo_path) : null,
             'membership_expires_on' => $this->membership_expires_on?->toDateString(),
+
+            // The other half of a couple package, when the caller asked for
+            // it. Only ever one level deep: the partner's own partner is this
+            // member, and nesting it would recurse.
+            'partner' => $this->whenLoaded('partner', fn () => $this->partner === null ? null : [
+                'id' => $this->partner->id,
+                'full_name' => $this->partner->full_name,
+                'membership_number' => $this->partner->membership_number,
+            ]),
         ];
     }
 }

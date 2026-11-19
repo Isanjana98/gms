@@ -431,7 +431,13 @@ export function Td({
 export function MemberCell({
   member,
 }: {
-  member?: { id: number; full_name: string; membership_number: string; photo_url?: string | null } | null
+  member?: {
+    id: number
+    full_name: string
+    membership_number: string
+    photo_url?: string | null
+    partner?: { id: number; full_name: string } | null
+  } | null
 }) {
   if (!member) return <span className="text-ink-400">—</span>
 
@@ -441,6 +447,15 @@ export function MemberCell({
       <span>
         <span className="block font-medium text-ink-900 group-hover:text-brand-700">{member.full_name}</span>
         <span className="block text-xs text-ink-500">{member.membership_number}</span>
+        {/* A couple package is sold once and used by two people, so a halved
+            price on one row only makes sense next to the other name. Plain
+            text, not a link: this cell is already wrapped in one, and a link
+            inside a link is invalid and unclickable. */}
+        {member.partner && (
+          <span className="mt-1 inline-block rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-medium text-brand-700">
+            Couple · {member.partner.full_name}
+          </span>
+        )}
       </span>
     </Link>
   )

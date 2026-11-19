@@ -166,6 +166,11 @@ export function MembersPage() {
                       label: 'Last visit',
                       value: member.last_visit_at ? relative(member.last_visit_at) : 'never',
                     },
+                    // Only for the half of a couple package. The table shows
+                    // this inside the member cell, which the card does not use.
+                    ...(member.partner
+                      ? [{ label: 'Couple with', value: member.partner.full_name }]
+                      : []),
                   ]}
                 />
               )}

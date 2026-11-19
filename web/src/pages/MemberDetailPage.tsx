@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   Alert,
   Badge,
@@ -23,6 +23,7 @@ import {
 } from '../components/ui'
 import { MemberDocuments } from '../components/MemberDocuments'
 import { MemberHealth } from '../components/MemberHealth'
+import { useConfirm } from '../components/Confirm'
 import { useToast } from '../components/Toast'
 import { PhotoUpload } from '../components/PhotoUpload'
 import { WeeklySchedule, type ScheduleDay, type ScheduleExercise } from '../components/WeeklySchedule'
@@ -56,6 +57,8 @@ export function MemberDetailPage() {
   const { can } = useAuth()
   const queryClient = useQueryClient()
   const toast = useToast()
+  const confirm = useConfirm()
+  const navigate = useNavigate()
 
   const [tab, setTab] = useState<Tab>('memberships')
   const [renewing, setRenewing] = useState<Membership | null>(null)
@@ -78,6 +81,21 @@ export function MemberDetailPage() {
     queryClient.invalidateQueries({ queryKey: ['member-schedule', Number(id)] })
   }
 
+  /**
+   * Removing a member is a soft delete on the server: the row and its
+   * financial history stay, and the member stops appearing in the system.
+   * Declared above the early returns because hooks cannot be conditional.
+   */
+  const remove = useMutation({
+    mutationFn: async () => (await api.delete(`/members/${id}`)).data,
+    onSuccess: (result: { message: string }) => {
+      toast.success(result.message)
+      queryClient.invalidateQueries({ queryKey: ['members'] })
+      navigate('/members')
+    },
+    onError: (err) => toast.error('Could not remove the member', errorMessage(err)),
+  })
+
   if (memberQuery.isLoading) return <LoadingBlock />
   if (memberQuery.error) return <Alert>{errorMessage(memberQuery.error)}</Alert>
 
@@ -85,6 +103,35 @@ export function MemberDetailPage() {
   if (!member) return null
 
   const current = member.current_membership
+
+  const askDelete = async () => {
+    const ok = await confirm({
+      title: `Remove ${member.full_name}?`,
+      tone: 'danger',
+      confirmLabel: 'Remove member',
+      // The membership number has to be typed out. Reception works down a
+      // list of similar names, and this is the one action on the page that
+      // cannot be undone from the panel.
+      typeToConfirm: member.membership_number,
+      message: (
+        <>
+          {member.full_name} will stop appearing anywhere in the system. Their memberships,
+          invoices, payments and attendance are kept, so the financial record stays intact and an
+          administrator can restore them from the database.
+        </>
+      ),
+      detail: (
+        <>
+          {member.membership_number} · joined {date(member.join_date)}
+          {member.total_visits > 0 &&
+            ` · ${member.total_visits} recorded visit${member.total_visits === 1 ? '' : 's'}`}
+        </>
+      ),
+    })
+
+    if (ok) remove.mutate()
+  }
+
   const tabs: Array<{ key: Tab; label: string; show: boolean }> = [
     { key: 'memberships', label: 'Memberships', show: can(P.membershipsView) },
     { key: 'invoices', label: 'Invoices', show: can(P.invoicesView) },
@@ -106,6 +153,17 @@ export function MemberDetailPage() {
             <span>{member.membership_number}</span>
             <StatusBadge status={member.status} />
             {member.trainer && <span>· Trainer: {member.trainer.full_name}</span>}
+            {/* The other half of a couple package. Shown here rather than in
+                a tab because the question "who is this person here with" is
+                asked while they are standing at the desk. */}
+            {member.partner && (
+              <span>
+                · Partner:{' '}
+                <Link to={`/members/${member.partner.id}`} className="font-medium text-brand-600 hover:underline">
+                  {member.partner.full_name}
+                </Link>
+              </span>
+            )}
           </span>
         }
         actions={
@@ -131,6 +189,16 @@ export function MemberDetailPage() {
             {can(P.membershipsCreate) && !current && (
               <Button size="sm" onClick={() => setSelling(true)}>
                 Sell membership
+              </Button>
+            )}
+            {can(P.membersDelete) && (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={askDelete}
+                disabled={remove.isPending}
+              >
+                {remove.isPending ? 'Removing…' : 'Remove member'}
               </Button>
             )}
           </>
@@ -1282,9 +1350,40 @@ function EditMemberModal({
     emergency_contact_number: member.emergency_contact_number ?? '',
     status: member.status,
     notes: member.notes ?? '',
+    partner_member_id: member.partner_member_id ? String(member.partner_member_id) : '',
   })
   const [error, setError] = useState<string | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
+
+  // Couple partner. Held separately from `form` because the form carries ids
+  // while the field has to show a name - nobody recognises member 391.
+  const [partner, setPartner] = useState(member.partner ?? null)
+  const [partnerTerm, setPartnerTerm] = useState('')
+  const [partnerSearch, setPartnerSearch] = useState('')
+
+  useEffect(() => {
+    const timer = setTimeout(() => setPartnerSearch(partnerTerm.trim()), 300)
+    return () => clearTimeout(timer)
+  }, [partnerTerm])
+
+  const partnerResults = useQuery({
+    queryKey: ['partner-search', partnerSearch],
+    queryFn: async () =>
+      (await api.get<Paginated<Member>>('/members', { params: { search: partnerSearch, per_page: 8 } })).data,
+    enabled: partner === null && partnerSearch.length >= 2,
+  })
+
+  const choosePartner = (chosen: Member | null) => {
+    setPartner(
+      chosen && {
+        id: chosen.id,
+        full_name: chosen.full_name,
+        membership_number: chosen.membership_number,
+      },
+    )
+    setPartnerTerm('')
+    setForm((prev) => ({ ...prev, partner_member_id: chosen ? String(chosen.id) : '' }))
+  }
 
   const save = useMutation({
     mutationFn: async () => {
@@ -1389,6 +1488,74 @@ function EditMemberModal({
             <Input value={form.emergency_contact_number} onChange={set('emergency_contact_number')} />
           </Field>
         </div>
+
+        <Field
+          label="Couple partner"
+          hint="The other half of a couple package. Linking one side links the other."
+          error={errors.partner_member_id}
+        >
+          {partner ? (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-ink-200 px-3 py-2">
+              <span className="min-w-0 truncate text-sm">
+                <span className="font-medium text-ink-900">{partner.full_name}</span>
+                <span className="text-ink-500"> · {partner.membership_number}</span>
+              </span>
+              <Button variant="secondary" size="sm" onClick={() => choosePartner(null)}>
+                Remove
+              </Button>
+            </div>
+          ) : (
+            <>
+              <Input
+                value={partnerTerm}
+                onChange={(e) => setPartnerTerm(e.target.value)}
+                placeholder="Search a name or membership number"
+                autoComplete="off"
+              />
+
+              {partnerSearch.length >= 2 && (
+                <div className="mt-1 max-h-40 overflow-y-auto rounded-lg border border-ink-200">
+                  {partnerResults.isFetching && !partnerResults.data ? (
+                    <p className="px-3 py-2 text-sm text-ink-500">Searching…</p>
+                  ) : (
+                    (() => {
+                      // Nobody is their own partner, so this member is never
+                      // offered even when their own name is what was typed.
+                      const found = (partnerResults.data?.data ?? []).filter((m) => m.id !== member.id)
+
+                      if (found.length === 0) {
+                        return (
+                          <p className="px-3 py-2 text-sm text-ink-500">
+                            No member matches “{partnerSearch}”.
+                          </p>
+                        )
+                      }
+
+                      return (
+                        <ul className="divide-y divide-ink-100">
+                          {found.map((candidate) => (
+                            <li key={candidate.id}>
+                              <button
+                                type="button"
+                                onClick={() => choosePartner(candidate)}
+                                className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-ink-50"
+                              >
+                                <span className="min-w-0 truncate">{candidate.full_name}</span>
+                                <span className="shrink-0 text-xs text-ink-500">
+                                  {candidate.membership_number}
+                                </span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )
+                    })()
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </Field>
 
         <div className="rounded-lg border border-ink-200 bg-ink-50 p-4">
           <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-600">Access</p>

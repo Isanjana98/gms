@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   Alert,
   Card,
   EmptyState,
   FilterBar,
+  Input,
   LoadingBlock,
   MemberCell,
   PageHeader,
@@ -28,6 +29,19 @@ export function MembershipsPage() {
   const status = params.get('status') ?? ''
   const paymentStatus = params.get('payment_status') ?? ''
 
+  // Typed straight into the query, the way the members list works: a search
+  // that needs a button pressed is a search people stop using.
+  const [search, setSearch] = useState(params.get('search') ?? '')
+  const [debounced, setDebounced] = useState(search)
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebounced(search.trim())
+      setPage(1)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [search])
+
   const setFilter = (key: string, value: string) => {
     const next = new URLSearchParams(params)
     if (value) next.set(key, value)
@@ -37,11 +51,12 @@ export function MembershipsPage() {
   }
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['memberships', status, paymentStatus, page],
+    queryKey: ['memberships', debounced, status, paymentStatus, page],
     queryFn: async () =>
       (
         await api.get<Paginated<Membership>>('/memberships', {
           params: {
+            search: debounced || undefined,
             status: status || undefined,
             payment_status: paymentStatus || undefined,
             page,
@@ -63,6 +78,13 @@ export function MembershipsPage() {
 
       <Card padded={false}>
         <FilterBar>
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search member, number or reference…"
+            className="max-w-xs"
+            aria-label="Search memberships"
+          />
           <Select value={status} onChange={(e) => setFilter('status', e.target.value)} className="max-w-[12rem]">
             <option value="">All statuses</option>
             <option value="ACTIVE">Active</option>
@@ -90,7 +112,10 @@ export function MembershipsPage() {
         ) : isLoading ? (
           <LoadingBlock />
         ) : !data?.data?.length ? (
-          <EmptyState title="No memberships match these filters" />
+          <EmptyState
+            title="No memberships match these filters"
+            description={debounced ? `Nothing found for “${debounced}”.` : undefined}
+          />
         ) : (
           <>
             <RecordList

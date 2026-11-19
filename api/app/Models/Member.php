@@ -27,7 +27,7 @@ use Laravel\Sanctum\HasApiTokens;
  * Members have no password at all. See MemberAuthService.
  */
 #[Fillable([
-    'branch_id', 'trainer_id', 'membership_number', 'full_name', 'nic_passport',
+    'branch_id', 'trainer_id', 'partner_member_id', 'membership_number', 'full_name', 'nic_passport',
     'date_of_birth', 'gender', 'address', 'city', 'telephone', 'email',
     'emergency_contact_name', 'emergency_contact_number', 'join_date',
     'photo_path', 'status', 'notes', 'created_by',
@@ -66,6 +66,18 @@ class Member extends Model implements AuthenticatableContract
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    /**
+     * The other half of a couple package.
+     *
+     * Kept symmetrical by MemberController - see syncPartner() there. Reading
+     * it from either member must give the same answer, because reception has
+     * whichever of the two happens to be standing at the desk.
+     */
+    public function partner(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'partner_member_id');
     }
 
     public function memberships(): HasMany

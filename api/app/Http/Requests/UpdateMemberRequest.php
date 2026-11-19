@@ -20,6 +20,12 @@ class UpdateMemberRequest extends FormRequest
         return [
             'branch_id' => ['sometimes', 'integer', 'exists:branches,id'],
             'trainer_id' => ['nullable', 'integer', 'exists:trainers,id'],
+            // Nobody is their own partner. Without this the pair-syncing in
+            // the controller would write a member as their own other half.
+            'partner_member_id' => [
+                'nullable', 'integer', 'exists:members,id',
+                Rule::notIn([$this->route('member')?->getKey()]),
+            ],
             'full_name' => ['sometimes', 'string', 'max:255'],
             'nic_passport' => ['nullable', 'string', 'max:30'],
             'date_of_birth' => ['nullable', 'date', 'before:today'],

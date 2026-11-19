@@ -38,7 +38,7 @@ class MemberController extends Controller
                 $request->integer('expiring_days') ?: (int) config('gms.membership.expiring_soon_days', 30),
             ))
             ->when($request->boolean('no_fingerprint'), fn ($q) => $q->whereDoesntHave('biometricUsers', fn ($b) => $b->where('enrollment_status', 'ENROLLED')))
-            ->with(['currentMembership', 'trainer:id,full_name', 'branch:id,name,code'])
+            ->with(['currentMembership', 'trainer:id,full_name', 'branch:id,name,code', 'partner:id,full_name,membership_number'])
             ->orderBy($this->sortColumn($request), $request->string('direction')->toString() === 'asc' ? 'asc' : 'desc')
             ->paginate($this->perPage($request));
 
@@ -108,6 +108,7 @@ class MemberController extends Controller
             'currentMembership.plan:id,name,code',
             'memberships.plan:id,name,code',
             'biometricUsers.device:id,name,code',
+            'partner:id,full_name,membership_number',
         ]);
 
         return new MemberResource($member);
@@ -132,9 +133,48 @@ class MemberController extends Controller
 
         $member->update(collect($data)->except('photo')->all());
 
-        $member->load(['currentMembership', 'branch:id,name,code', 'trainer:id,full_name']);
+        if (array_key_exists('partner_member_id', $data)) {
+            $this->syncPartner($member, $data['partner_member_id']);
+        }
+
+        $member->load(['currentMembership', 'branch:id,name,code', 'trainer:id,full_name', 'partner']);
 
         return new MemberResource($member);
+    }
+
+    /**
+     * Keep a couple link pointing both ways.
+     *
+     * Reception looks up whichever of the two is standing at the desk, so a
+     * one-sided link is as good as no link. Any earlier pairing on either
+     * side is cleared first: without that, a member who changes partner
+     * leaves the previous one pointing at somebody who no longer points back,
+     * and the pair that shows depends on which of the three you opened.
+     */
+    private function syncPartner(Member $member, ?int $partnerId): void
+    {
+        DB::transaction(function () use ($member, $partnerId) {
+            // Whoever used to be paired with this member stops being so -
+            // unless they are the new partner, in which case leave them be.
+            Member::query()
+                ->where('partner_member_id', $member->getKey())
+                ->when($partnerId !== null, fn ($q) => $q->whereKeyNot($partnerId))
+                ->update(['partner_member_id' => null]);
+
+            if ($partnerId === null) {
+                return;
+            }
+
+            // And whoever the new partner was previously paired with.
+            Member::query()
+                ->where('partner_member_id', $partnerId)
+                ->whereKeyNot($member->getKey())
+                ->update(['partner_member_id' => null]);
+
+            Member::query()
+                ->whereKey($partnerId)
+                ->update(['partner_member_id' => $member->getKey()]);
+        });
     }
 
     /**
